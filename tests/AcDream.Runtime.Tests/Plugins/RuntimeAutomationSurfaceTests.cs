@@ -331,8 +331,7 @@ public sealed class RuntimeAutomationSurfaceTests
 
     /// <summary>
     /// The inert surface every host without a live local player falls back
-    /// to — including <c>HeadlessAutomationSurface</c>, which has no
-    /// navigation surface of its own — must refuse rather than pretend.
+    /// to must refuse rather than pretend.
     /// </summary>
     [Fact]
     public void FaceHeading_IsUnavailableOnTheNoOpSurface()
