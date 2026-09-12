@@ -6,9 +6,9 @@ Workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
 | Event | `windows-gate` | `linux-portable` | `macos-portable` | `vulkan-hardware` | `release` |
 |---|---|---|---|---|---|
-| Pull request | GitHub-hosted `windows-latest` | GitHub-hosted `ubuntu-latest` | GitHub-hosted Apple-silicon `macos-14` | not run | not run |
-| Push to `main` | self-hosted `openac-windows` | self-hosted `openac-linux` | GitHub-hosted Apple-silicon `macos-14` | self-hosted `openac-windows` (NVIDIA GPU) | not run |
-| Push of a `v*` tag | self-hosted | self-hosted | GitHub-hosted Apple-silicon | self-hosted | self-hosted, after all four are green |
+| Pull request | GitHub-hosted `windows-latest` | GitHub-hosted `ubuntu-latest` | GitHub-hosted `macos-14` (Apple silicon) and `macos-15-intel` (Intel) | not run | not run |
+| Push to `main` | self-hosted `openac-windows` | self-hosted `openac-linux` | GitHub-hosted `macos-14` (Apple silicon) and `macos-15-intel` (Intel) | self-hosted `openac-windows` (NVIDIA GPU) | not run |
+| Push of a `v*` tag | self-hosted | self-hosted | GitHub-hosted, both architectures | self-hosted | self-hosted, after all four are green |
 
 Changes that touch only Markdown files, `docs/`, `LICENSE`, or the issue
 templates skip the workflow entirely (`paths-ignore` on both triggers); a
@@ -30,9 +30,11 @@ on real hardware.
 with the portable filter from `tools/run-release-gate.ps1`. `linux-portable`
 runs the presentation-free closure with the Linux lane enabled; the network
 test assembly runs single-threaded there because its socket tests contend on a
-small container. `macos-portable` enables the macOS lane, publishes the native
-Apple-silicon payloads, and checks the Finder-launchable app bundle. GitHub
-documents `macos-14` as an Apple-silicon hosted runner. `vulkan-hardware` runs
+small container. `macos-portable` is a matrix with one entry per shipped macOS
+architecture: `macos-14` (Apple silicon, `osx-arm64`) and `macos-15-intel`
+(Intel, `osx-x64`). Each entry enables the macOS lane, publishes the native
+payloads for its own RID, and checks the Finder-launchable app bundle. Hosted
+macOS runners have no GPU, so neither entry renders. `vulkan-hardware` runs
 `Lane=Vulkan` on the NVIDIA runner. A test in
 `GitHubWorkflowFilterContractTests` pins every workflow filter to the script's
 default so the platform lanes cannot drift.
@@ -41,6 +43,33 @@ The two `workflow_dispatch` workflows, `headless-portability.yml` and
 `release-gate.yml`, are manual deep checks: the portable closure on both
 operating systems including a lavapipe software-Vulkan pass, and the complete
 bounded local gate on a hosted Windows runner.
+
+## macOS Vulkan runtime
+
+Each macOS client carries its own Vulkan loader and MoltenVK, so players never
+install Vulkan. The two architectures take those libraries from different
+places:
+
+- **Apple silicon (`osx-arm64`)** bundles the pinned Homebrew `molten-vk` and
+  `vulkan-loader` formulae installed on the runner.
+- **Intel (`osx-x64`)** cannot use Homebrew, which no longer builds Intel
+  bottles, or the LunarG SDK, whose installer runs only on Apple silicon.
+  `tools/build-macos-x64-vulkan.ps1` instead downloads the pinned MoltenVK
+  release archive from KhronosGroup/MoltenVK (SHA-256 checked) and builds the
+  Vulkan loader for x86_64 from its pinned KhronosGroup/Vulkan-Loader SDK tag
+  (commit checked). It needs CMake, git, and Python 3, which the hosted runner
+  provides. CI caches the output under `artifacts/macos-x64-vulkan`, keyed on
+  the script, so the loader is rebuilt only when a pin changes.
+
+To move Intel to a newer MoltenVK or loader, edit the pins at the top of
+`tools/build-macos-x64-vulkan.ps1`: the MoltenVK release URL and its SHA-256,
+and the loader tag and the commit that tag resolves to.
+
+`tools/package-macos-vulkan.ps1` then treats both sources the same way: it
+rewrites library identities to `@loader_path`, rejects any library without a
+slice for the target architecture, ad-hoc signs, writes the MoltenVK ICD
+manifest, and records where each library came from in
+`Resources/vulkan/dependencies.json`.
 
 ## Releases
 
@@ -55,9 +84,10 @@ git push origin v0.1.0
 ```
 
 When the four gate jobs are green, the `release` job downloads the verified
-Apple-silicon assets from `macos-portable`, then runs `tools/publish-bin.ps1`
-for the Windows and Linux payloads. It writes one manifest whose asset URLs
-point at the release for that tag, then creates the GitHub Release with:
+macOS assets from both `macos-portable` runners, then runs
+`tools/publish-bin.ps1` for the Windows and Linux payloads. It writes one
+manifest whose asset URLs point at the release for that tag, then creates the
+GitHub Release with:
 
 ```
 client-win-x64.zip        AcDream.App.exe + acdream-headless.exe
@@ -66,6 +96,8 @@ client-linux-x64.zip      AcDream.App + acdream-headless
 launcher-linux-x64.zip    acdream-launcher + acdream-bake
 client-osx-arm64.zip      acdream-client + acdream-headless for Apple silicon
 launcher-osx-arm64.zip    OpenAC.app Finder bundle with launcher + bake
+client-osx-x64.zip        acdream-client + acdream-headless for Intel
+launcher-osx-x64.zip      OpenAC.app Finder bundle with launcher + bake
 manifest.json             version, minimum launcher version, asset URLs, SHA-256s
 ```
 
@@ -75,13 +107,19 @@ and client label therefore describe the same release. Source builds may append
 commit metadata to the assembly informational version; the client label shows
 the release number without that suffix.
 
+To build the macOS payloads locally, run `tools/publish-bin.ps1 -MacOnly` on a
+Mac with `-MacRid osx-arm64` (the default, with Homebrew's `molten-vk` and
+`vulkan-loader` installed) or `-MacRid osx-x64` (which builds or reuses the
+Intel Vulkan runtime described above). `-MacArtifactsDirectory` accepts any
+complete `client-<rid>.zip` and `launcher-<rid>.zip` pairs for those two RIDs.
+
 The Linux and macOS client zips carry Unix file modes, so the executables
 extract with the execute bit set; the launcher's own extractor applies them
-too. `launcher-osx-arm64.zip` has one top-level item, `OpenAC.app`. Expand it,
+too. Each `launcher-osx-*.zip` has one top-level item, `OpenAC.app`. Expand it,
 move it into `~/Applications`, and open it in Finder. The app's `Info.plist`,
 icon, and privacy manifest are generated by `tools/package-macos-launcher.ps1`.
-The bare Apple-silicon client executable is `acdream-client`; its Vulkan
-loader, MoltenVK ICD, and privacy manifest are generated by
+The bare macOS client executable is `acdream-client`; its Vulkan loader,
+MoltenVK ICD, and privacy manifest are generated by
 `tools/package-macos-vulkan.ps1`. CI applies and verifies local ad-hoc
 signatures until a Developer ID signing and notarization release step is
 configured.
@@ -101,6 +139,29 @@ dotnet test tests/AcDream.Launcher.Core.Tests --filter Lane=Live
 That installs the advertised client from the real feed through the production
 updater, with real hash verification and atomic activation, into a temporary
 directory.
+
+## Retiring Intel macOS support
+
+GitHub has said `macos-15-intel` is its last x86_64 image, available until
+August 2027. When Intel support ends, removing it touches only Intel-specific
+pieces; the Apple-silicon lane, launcher, and client code stay as they are:
+
+1. In `.github/workflows/ci.yml`, delete the `macos-15-intel` matrix entry, the
+   two `osx-x64` Vulkan runtime steps, and the Intel line and the two
+   `osx-x64` files in the `release` job.
+2. Delete `tools/build-macos-x64-vulkan.ps1`.
+3. In `tools/package-macos-vulkan.ps1`, delete the `osx-x64` branch and
+   `-VulkanRuntimeDirectory`, and drop `osx-x64` from `-Rid`.
+4. In `tools/publish-bin.ps1`, delete the `osx-x64` runtime block and
+   `-MacVulkanRuntimeDirectory`, and drop `osx-x64` from `-MacRid` and from
+   `Copy-MacArtifacts`.
+5. Delete the `packages.osx-x64.lock.json` files and the `osx-x64` test cases
+   in `tests/AcDream.Launcher.Core.Tests/Updates`.
+6. Remove the Intel rows and this section from this document.
+
+Launchers already installed on Intel Macs keep the client they have. A release
+without `osx-x64` payloads fails their update check, which the launcher shows
+as "Updates could not be checked" rather than installing anything.
 
 ## Self-hosted runner notes
 

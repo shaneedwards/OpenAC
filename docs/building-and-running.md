@@ -15,7 +15,7 @@
   vulkan-loader`) when running from source; MoltenVK is reached through
   `VK_KHR_portability_enumeration`, and the loader needs
   `VK_ICD_FILENAMES=$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json`.
-  The Apple-silicon launcher distribution supplies its own validated loader,
+  The macOS launcher distributions supply their own validated loader,
   MoltenVK, and ICD manifest for launched clients.
 
 Windows and Linux (x64), plus macOS (arm64), are supported by the launcher,

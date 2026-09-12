@@ -5,6 +5,9 @@ param(
     [switch]$IncludeLinux,
     [switch]$IncludeMacOS,
     [switch]$MacOnly,
+    [ValidateSet('osx-arm64', 'osx-x64')][string]$MacRid = 'osx-arm64',
+    # osx-x64 only: where tools/build-macos-x64-vulkan.ps1 builds or reuses its runtime.
+    [string]$MacVulkanRuntimeDirectory,
     [string]$MacArtifactsDirectory,
     [string]$MinimumLauncherVersion = '0.0.1'
 )
@@ -53,9 +56,12 @@ if ($IncludeMacOS -and -not $IsMacOS) {
 if (-not [string]::IsNullOrWhiteSpace($MacArtifactsDirectory) -and $IncludeMacOS) {
     throw 'Use either -IncludeMacOS or -MacArtifactsDirectory, not both.'
 }
-[string[]]$Rids = if ($MacOnly) { 'osx-arm64' } else { 'win-x64' }
+if ($PSBoundParameters.ContainsKey('MacRid') -and -not ($MacOnly -or $IncludeMacOS)) {
+    throw '-MacRid selects the macOS payload built by -MacOnly or -IncludeMacOS.'
+}
+[string[]]$Rids = if ($MacOnly) { $MacRid } else { 'win-x64' }
 if ($IncludeLinux) { $Rids += 'linux-x64' }
-if ($IncludeMacOS) { $Rids += 'osx-arm64' }
+if ($IncludeMacOS) { $Rids += $MacRid }
 
 Write-Host "acdream alpha feed" -ForegroundColor Cyan
 Write-Host "  version : $Version"
@@ -218,14 +224,25 @@ function Copy-MacArtifacts {
         throw "macOS release artifact directory '$source' does not exist."
     }
 
-    foreach ($name in @('client-osx-arm64.zip', 'launcher-osx-arm64.zip')) {
-        $from = Join-Path $source $name
-        $to = Join-Path $BinRoot $name
-        if (-not (Test-Path -LiteralPath $from -PathType Leaf)) {
-            throw "macOS release artifact '$from' is missing."
+    # Each macOS runner uploads the pair for its own architecture; take every
+    # complete pair that arrived and refuse a half-uploaded one.
+    [string[]]$copiedRids = @()
+    foreach ($rid in @('osx-arm64', 'osx-x64')) {
+        $names = @("client-$rid.zip", "launcher-$rid.zip")
+        $present = @($names | Where-Object { Test-Path -LiteralPath (Join-Path $source $_) -PathType Leaf })
+        if ($present.Count -eq 0) { continue }
+        if ($present.Count -ne $names.Count) {
+            throw "macOS release artifacts for '$rid' are incomplete in '$source'."
         }
-        Copy-Item -LiteralPath $from -Destination $to -Force
+        foreach ($name in $names) {
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $BinRoot $name) -Force
+        }
+        $copiedRids += $rid
     }
+    if ($copiedRids.Count -eq 0) {
+        throw "No macOS release artifacts were found in '$source'."
+    }
+    return $copiedRids
 }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
@@ -249,7 +266,7 @@ foreach ($rid in $Rids) {
     $launcherZip = Join-Path $BinRoot "launcher-$rid.zip"
 
     Write-Host "[$rid] packing..." -ForegroundColor Yellow
-    if ($rid -eq 'osx-arm64') {
+    if ($rid -like 'osx-*') {
         $publishedAppHost = Join-Path $clientDirectory 'AcDream.App'
         $macClient = Join-Path $clientDirectory 'acdream-client'
         if (-not (Test-Path -LiteralPath $publishedAppHost -PathType Leaf)) {
@@ -259,16 +276,28 @@ foreach ($rid in $Rids) {
             throw "macOS graphical client destination '$macClient' already exists."
         }
         Move-Item -LiteralPath $publishedAppHost -Destination $macClient
-        & (Join-Path $RepoRoot 'tools/package-macos-vulkan.ps1') -ClientDirectory $clientDirectory
+        $vulkanArguments = @{ ClientDirectory = $clientDirectory; Rid = $rid }
+        if ($rid -eq 'osx-x64') {
+            # Intel-only: the x86_64 loader and MoltenVK come from pinned Khronos
+            # sources, built once and reused while their pins are unchanged.
+            $runtime = if ([string]::IsNullOrWhiteSpace($MacVulkanRuntimeDirectory)) {
+                Join-Path $RepoRoot 'artifacts/macos-x64-vulkan'
+            } else {
+                $MacVulkanRuntimeDirectory
+            }
+            & (Join-Path $RepoRoot 'tools/build-macos-x64-vulkan.ps1') -OutputDirectory $runtime
+            $vulkanArguments.VulkanRuntimeDirectory = $runtime
+        }
+        & (Join-Path $RepoRoot 'tools/package-macos-vulkan.ps1') @vulkanArguments
         if ($LASTEXITCODE) { throw 'macOS Vulkan dependency packaging failed.' }
     }
-    $clientExecutables = if ($rid -eq 'osx-arm64') {
+    $clientExecutables = if ($rid -like 'osx-*') {
         @('acdream-client', 'acdream-headless')
     } else {
         @("AcDream.App$suffix", "acdream-headless$suffix")
     }
     New-PayloadZip $clientDirectory $clientZip $clientExecutables
-    if ($rid -eq 'osx-arm64') {
+    if ($rid -like 'osx-*') {
         & (Join-Path $RepoRoot 'tools/package-macos-launcher.ps1') `
             -PublishDirectory $launcherDirectory `
             -OutputDirectory $Staging `
@@ -284,13 +313,14 @@ foreach ($rid in $Rids) {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($MacArtifactsDirectory)) {
-    Copy-MacArtifacts $MacArtifactsDirectory
-    $clients['osx-arm64'] = Get-Artifact `
-        (Join-Path $BinRoot 'client-osx-arm64.zip') `
-        "$RawBase/client-osx-arm64.zip"
-    $launchers['osx-arm64'] = Get-Artifact `
-        (Join-Path $BinRoot 'launcher-osx-arm64.zip') `
-        "$RawBase/launcher-osx-arm64.zip"
+    foreach ($macArtifactRid in @(Copy-MacArtifacts $MacArtifactsDirectory)) {
+        $clients[$macArtifactRid] = Get-Artifact `
+            (Join-Path $BinRoot "client-$macArtifactRid.zip") `
+            "$RawBase/client-$macArtifactRid.zip"
+        $launchers[$macArtifactRid] = Get-Artifact `
+            (Join-Path $BinRoot "launcher-$macArtifactRid.zip") `
+            "$RawBase/launcher-$macArtifactRid.zip"
+    }
 }
 
 $manifest = [ordered]@{

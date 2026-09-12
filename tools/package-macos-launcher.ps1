@@ -174,7 +174,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not ad-hoc sign OpenAC.app.' }
 if ($LASTEXITCODE -ne 0) { throw 'OpenAC.app signature validation failed.' }
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $zip) -Force | Out-Null
-& /usr/bin/ditto -c -k --sequesterRsrc --keepParent $bundle $zip
+# No extended attributes or resource forks: macOS can tag freshly written files
+# (com.apple.provenance), and ditto would archive those as __MACOSX entries that
+# the single-bundle check below rejects.
+& /usr/bin/ditto -c -k --norsrc --noextattr --keepParent $bundle $zip
 if ($LASTEXITCODE -ne 0) { throw 'ditto could not archive OpenAC.app.' }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem

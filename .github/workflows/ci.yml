@@ -106,10 +106,23 @@ jobs:
           done
 
   macos-portable:
-    # GitHub documents macos-14 as an Apple-silicon hosted image. Keep this
-    # hosted for pushes as well as PRs: the repository has no self-hosted Mac.
-    runs-on: macos-14
+    # One GitHub-hosted runner per shipped macOS architecture: GitHub documents
+    # macos-14 as Apple silicon and macos-15-intel as its x86_64 image. Keep
+    # these hosted for pushes as well as PRs: the repository has no self-hosted
+    # Mac. Each runner packages only its own RID, because the bundled MoltenVK
+    # and Vulkan loader come from that runner's native Homebrew.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            rid: osx-arm64
+          - runner: macos-15-intel
+            rid: osx-x64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    env:
+      MAC_RID: ${{ matrix.rid }}
     steps:
       - uses: actions/checkout@v6
 
@@ -119,12 +132,28 @@ jobs:
           global-json-file: global.json
 
       - name: Install pinned Apple-silicon Vulkan dependencies
+        if: matrix.rid == 'osx-arm64'
         shell: bash
         run: |
           set -euo pipefail
           brew install molten-vk vulkan-loader
           test "$(brew info --json=v2 molten-vk | jq -r '.formulae[0].installed[] | select(.version == "1.4.2") | .version')" = 1.4.2
           test "$(brew info --json=v2 vulkan-loader | jq -r '.formulae[0].installed[] | select(.version == "1.4.357.0") | .version')" = 1.4.357.0
+
+      # Intel-only: Homebrew no longer builds Intel bottles, so the x86_64 loader
+      # and MoltenVK come from pinned Khronos sources. The build script holds the
+      # pins, so hashing it keys the cache.
+      - name: Restore the pinned x86_64 Vulkan runtime
+        if: matrix.rid == 'osx-x64'
+        uses: actions/cache@v4
+        with:
+          path: artifacts/macos-x64-vulkan
+          key: macos-x64-vulkan-${{ hashFiles('tools/build-macos-x64-vulkan.ps1') }}
+
+      - name: Build the pinned x86_64 Vulkan runtime
+        if: matrix.rid == 'osx-x64'
+        shell: pwsh
+        run: ./tools/build-macos-x64-vulkan.ps1 -OutputDirectory artifacts/macos-x64-vulkan
 
       - name: Build the macOS native test and launcher closures
         shell: pwsh
@@ -147,17 +176,18 @@ jobs:
           dotnet test tests/AcDream.App.Tests/AcDream.App.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~AppCredentialResolverTests&Lane=MacOS'
           dotnet test tests/AcDream.App.Tests/AcDream.App.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~GraphicalVulkanLoaderTests'
 
-      - name: Build and verify the Apple-silicon release payloads
+      - name: Build and verify the macOS release payloads
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          ./tools/publish-bin.ps1 -MacOnly
+          $rid = $env:MAC_RID
+          ./tools/publish-bin.ps1 -MacOnly -MacRid $rid
           $expanded = Join-Path $env:RUNNER_TEMP 'openac-macos-launcher'
           $clientExpanded = Join-Path $env:RUNNER_TEMP 'openac-macos-client'
-          & /usr/bin/ditto -x -k bin/launcher-osx-arm64.zip $expanded
-          if ($LASTEXITCODE -ne 0) { throw 'Could not expand launcher-osx-arm64.zip.' }
-          & /usr/bin/ditto -x -k bin/client-osx-arm64.zip $clientExpanded
-          if ($LASTEXITCODE -ne 0) { throw 'Could not expand client-osx-arm64.zip.' }
+          & /usr/bin/ditto -x -k "bin/launcher-$rid.zip" $expanded
+          if ($LASTEXITCODE -ne 0) { throw "Could not expand launcher-$rid.zip." }
+          & /usr/bin/ditto -x -k "bin/client-$rid.zip" $clientExpanded
+          if ($LASTEXITCODE -ne 0) { throw "Could not expand client-$rid.zip." }
           & /usr/bin/plutil -lint "$expanded/OpenAC.app/Contents/Info.plist"
           if ($LASTEXITCODE -ne 0) { throw 'OpenAC.app Info.plist is invalid.' }
           foreach ($path in @(
@@ -190,6 +220,7 @@ jobs:
           }
           $env:DOTNET_ROOT = '/definitely-not-installed'
           $env:DOTNET_ROOT_ARM64 = '/definitely-not-installed'
+          $env:DOTNET_ROOT_X64 = '/definitely-not-installed'
           $env:DOTNET_MULTILEVEL_LOOKUP = '0'
           & "$expanded/OpenAC.app/Contents/MacOS/acdream-launcher" --verify-publish
           if ($LASTEXITCODE -ne 0) { throw 'The packaged launcher is not self-contained.' }
@@ -198,11 +229,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: macos-release-assets
+          name: macos-release-assets-${{ matrix.rid }}
           if-no-files-found: error
           path: |
-            bin/client-osx-arm64.zip
-            bin/launcher-osx-arm64.zip
+            bin/client-${{ matrix.rid }}.zip
+            bin/launcher-${{ matrix.rid }}.zip
 
   vulkan-hardware:
     # Real-GPU lane. Only on pushes (never for fork PRs) and only on the
@@ -238,7 +269,8 @@ jobs:
       - name: Download macOS release assets
         uses: actions/download-artifact@v4
         with:
-          name: macos-release-assets
+          pattern: macos-release-assets-*
+          merge-multiple: true
           path: artifacts/macos-release-assets
 
       - name: Build payloads with release-asset URLs
@@ -256,6 +288,7 @@ jobs:
             **Windows:** download `launcher-win-x64.zip`, unzip it anywhere, and run `acdream-launcher.exe`.
             **Linux:** download `launcher-linux-x64.zip`, unzip it anywhere, and run `./acdream-launcher`.
             **macOS (Apple silicon):** download `launcher-osx-arm64.zip`, unzip it, drag `OpenAC.app` to `~/Applications`, then open it in Finder.
+            **macOS (Intel):** download `launcher-osx-x64.zip`, unzip it, drag `OpenAC.app` to `~/Applications`, then open it in Finder.
             The launcher installs the client, prepares your data files, and keeps itself and the client up to date.
 
             The `client-*.zip` files are the bare client and headless host for people who do not want the launcher.
@@ -266,6 +299,8 @@ jobs:
             bin/launcher-linux-x64.zip
             bin/client-osx-arm64.zip
             bin/launcher-osx-arm64.zip
+            bin/client-osx-x64.zip
+            bin/launcher-osx-x64.zip
             bin/manifest.json
           fail_on_unmatched_files: true
           generate_release_notes: true
