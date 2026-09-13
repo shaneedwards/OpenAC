@@ -87,7 +87,8 @@ foreach ($name in @('libvulkan.1.dylib', 'libMoltenVK.dylib')) {
 foreach ($destination in $copied.Values) {
     & /usr/bin/install_name_tool -id ('@loader_path/' + [IO.Path]::GetFileName($destination)) $destination
     if ($LASTEXITCODE -ne 0) { throw "Could not set bundled library identity for '$destination'." }
-    $links = & /usr/bin/otool -L $destination
+    # The MoltenVK release is universal; read only the slice this client loads.
+    $links = & /usr/bin/otool -arch x86_64 -L $destination
     if ($LASTEXITCODE -ne 0) { throw "otool failed for '$destination'." }
     foreach ($line in $links | Select-Object -Skip 1) {
         $dependency = $line.Trim()
