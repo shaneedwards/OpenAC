@@ -16,11 +16,16 @@
   `VK_KHR_portability_enumeration`, and the loader needs
   `VK_ICD_FILENAMES=$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json`.
   The Apple-silicon launcher distribution supplies its own validated loader,
-  MoltenVK, and ICD manifest for launched clients.
+  MoltenVK, and ICD manifest for launched clients. The Intel (`osx-x64`)
+  distribution does too, from a different source; see
+  [docs/ci-and-releases.md](ci-and-releases.md#macos-vulkan-runtime).
 
 Windows and Linux (x64), plus macOS (arm64), are supported by the launcher,
-graphical client, and bake step. The examples below use PowerShell; the bash
-equivalents differ only in how variables are set.
+graphical client, and bake step. Intel macOS (`osx-x64`) is also supported,
+best effort until August 2027; see
+[docs/ci-and-releases.md](ci-and-releases.md#retiring-intel-macos-support).
+The examples below use PowerShell; the bash equivalents differ only in how
+variables are set.
 
 ## Build and test
 
