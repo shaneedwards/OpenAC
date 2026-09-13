@@ -71,6 +71,13 @@ public sealed class GitHubWorkflowFilterContractTests
         foreach (string required in new[] { "windows-gate", "linux-portable", "macos-portable", "vulkan-hardware" })
             Assert.Contains($"needs.{required}.result == 'success'", header, StringComparison.Ordinal);
         Assert.DoesNotContain("needs.macos-intel.result", header, StringComparison.Ordinal);
+
+        // osx-x64: a failed Intel attach never fails the release job.
+        int attach = workflow.IndexOf("- name: Attach the Intel macOS assets", start, StringComparison.Ordinal);
+        Assert.True(attach > start, "Could not locate the Intel attach step.");
+        int nextStep = workflow.IndexOf("\n      - ", attach, StringComparison.Ordinal);
+        string attachStep = nextStep > attach ? workflow[attach..nextStep] : workflow[attach..];
+        Assert.Contains("continue-on-error: true", attachStep, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -392,6 +392,7 @@ jobs:
       # osx-x64: attached only when macos-intel succeeds.
       - name: Attach the Intel macOS assets
         if: needs.macos-intel.result == 'success'
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           append_body: true

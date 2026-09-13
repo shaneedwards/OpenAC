@@ -104,12 +104,13 @@ launcher-osx-arm64.zip    OpenAC.app Finder bundle with launcher + bake
 manifest.json             version, minimum launcher version, asset URLs, SHA-256s
 ```
 
-If `macos-intel` also succeeded, `release` downloads its assets too and
-attaches `client-osx-x64.zip` and `launcher-osx-x64.zip` (the Intel
-equivalents of the two `osx-arm64` entries above) in a second, best-effort
-release step that only appends to the release body created above. A failed or
-skipped `macos-intel` leaves the release exactly as it would be without Intel
-support at all.
+If `macos-intel` also succeeded, `release` downloads its assets too, the
+manifest lists them, and a second release step attaches `client-osx-x64.zip`
+and `launcher-osx-x64.zip` and appends one line to the release body. That step
+has `continue-on-error`, so it never fails the release job. An Intel launcher
+that checks for updates between the two steps, or after a failed attach, gets a
+failed update check until the job is re-run. A failed or skipped `macos-intel`
+leaves the release exactly as it would be without Intel support.
 
 `publish-bin.ps1` uses the repository version by default and rejects a supplied
 version that does not match it. The tag, package manifest, assembly metadata,
