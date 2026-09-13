@@ -1,8 +1,6 @@
 <#
 .SYNOPSIS
-    Builds the pinned x86_64 Vulkan runtime that
-    tools/package-macos-x64-vulkan.ps1 bundles into osx-x64 clients.
-    Intel-only; remove with the rest of osx-x64 support (docs/ci-and-releases.md).
+    Builds the pinned x86_64 Vulkan runtime bundled into osx-x64 clients (docs/ci-and-releases.md).
 #>
 [CmdletBinding()]
 param(
@@ -25,6 +23,7 @@ $pins = [ordered]@{
     loaderRepository = 'https://github.com/KhronosGroup/Vulkan-Loader.git'
     loaderTag = 'vulkan-sdk-1.4.357.0'
     loaderCommit = '5f157b62e333c63260d05d81bf66faa216ab0fb8'
+    macosDeploymentTarget = '14.0'
 }
 
 $output = [IO.Path]::GetFullPath($OutputDirectory)
@@ -48,7 +47,7 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ('openac-x64-vulkan-' + [Guid]::New
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 try {
     $archive = Join-Path $work 'MoltenVK-macos.tar'
-    Invoke-WebRequest -Uri $pins.moltenVkUrl -OutFile $archive
+    Invoke-WebRequest -Uri $pins.moltenVkUrl -OutFile $archive -MaximumRetryCount 3 -RetryIntervalSec 5
     $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -cne $pins.moltenVkSha256) {
         throw "MoltenVK archive SHA-256 '$actual' does not match the pinned $($pins.moltenVkSha256)."
@@ -72,7 +71,8 @@ try {
     # UPDATE_DEPS fetches Vulkan-Headers at the revision this loader tag records.
     $loaderBuild = Join-Path $work 'loader-build'
     & cmake -S $loaderSource -B $loaderBuild -D UPDATE_DEPS=ON -D BUILD_TESTS=OFF `
-        -D CMAKE_BUILD_TYPE=Release -D CMAKE_OSX_ARCHITECTURES=x86_64
+        -D CMAKE_BUILD_TYPE=Release -D CMAKE_OSX_ARCHITECTURES=x86_64 `
+        -D CMAKE_OSX_DEPLOYMENT_TARGET=$($pins.macosDeploymentTarget)
     if ($LASTEXITCODE -ne 0) { throw 'Vulkan-Loader configuration failed.' }
     & cmake --build $loaderBuild --config Release --parallel
     if ($LASTEXITCODE -ne 0) { throw 'Vulkan-Loader build failed.' }
@@ -85,7 +85,8 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $output 'lib') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $output 'licenses') -Force | Out-Null
     Copy-Item -LiteralPath $loaderPath -Destination (Join-Path $output 'lib/libvulkan.1.dylib')
-    Copy-Item -LiteralPath $moltenVk -Destination (Join-Path $output 'lib/libMoltenVK.dylib')
+    & /usr/bin/lipo $moltenVk -thin x86_64 -output (Join-Path $output 'lib/libMoltenVK.dylib')
+    if ($LASTEXITCODE -ne 0) { throw "Could not thin '$moltenVk' to x86_64." }
     Copy-Item -LiteralPath (Join-Path $loaderSource 'LICENSE.txt') -Destination (Join-Path $output 'licenses/vulkan-loader-LICENSE')
     Copy-Item -LiteralPath (Join-Path $moltenVkRoot 'LICENSE') -Destination (Join-Path $output 'licenses/molten-vk-LICENSE')
 
@@ -102,6 +103,7 @@ try {
             source = [ordered]@{
                 url = $pins.moltenVkUrl
                 sha256 = $pins.moltenVkSha256
+                architectures = 'x86_64'
             }
             license = 'Apache-2.0'
         },

@@ -21,14 +21,16 @@ if (-not (Test-Path -LiteralPath $client -PathType Container)) {
     throw "Published client directory '$client' does not exist."
 }
 
-# This is the only guard against packaging Intel libraries into an arm64 client.
-$clientExecutable = Join-Path $client 'acdream-client'
-if (-not (Test-Path -LiteralPath $clientExecutable -PathType Leaf)) {
-    throw "Published client directory '$client' has no acdream-client."
-}
-& /usr/bin/lipo $clientExecutable -verify_arch x86_64
-if ($LASTEXITCODE -ne 0) {
-    throw "'$clientExecutable' has no x86_64 slice; package-macos-x64-vulkan packages Intel clients only."
+# Confirms both native executables carry an x86_64 slice before Intel libraries are bundled.
+foreach ($name in @('acdream-client', 'acdream-headless')) {
+    $executable = Join-Path $client $name
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        throw "Published client directory '$client' has no $name."
+    }
+    & /usr/bin/lipo $executable -verify_arch x86_64
+    if ($LASTEXITCODE -ne 0) {
+        throw "'$executable' has no x86_64 slice; package-macos-x64-vulkan packages Intel clients only."
+    }
 }
 
 $runtime = [IO.Path]::GetFullPath($VulkanRuntimeDirectory)
@@ -85,10 +87,21 @@ foreach ($name in @('libvulkan.1.dylib', 'libMoltenVK.dylib')) {
 }
 
 foreach ($destination in $copied.Values) {
+    $loadCommands = & /usr/bin/otool -l $destination
+    if ($LASTEXITCODE -ne 0) { throw "otool failed for '$destination'." }
+    $minos = $loadCommands | Select-String -Pattern '^\s*minos\s+(\S+)' |
+        ForEach-Object { [version]$_.Matches[0].Groups[1].Value } |
+        Sort-Object -Descending | Select-Object -First 1
+    if ($null -eq $minos) { throw "'$destination' has no LC_BUILD_VERSION minos." }
+    if ($minos -gt [version]'14.0') {
+        throw "'$destination' targets macOS $minos, above the pinned 14.0 deployment target."
+    }
+}
+
+foreach ($destination in $copied.Values) {
     & /usr/bin/install_name_tool -id ('@loader_path/' + [IO.Path]::GetFileName($destination)) $destination
     if ($LASTEXITCODE -ne 0) { throw "Could not set bundled library identity for '$destination'." }
-    # The MoltenVK release is universal; read only the slice this client loads.
-    $links = & /usr/bin/otool -arch x86_64 -L $destination
+    $links = & /usr/bin/otool -L $destination
     if ($LASTEXITCODE -ne 0) { throw "otool failed for '$destination'." }
     foreach ($line in $links | Select-Object -Skip 1) {
         $dependency = $line.Trim()
@@ -96,7 +109,6 @@ foreach ($destination in $copied.Values) {
         if ($index -gt 0) { $dependency = $dependency.Substring(0, $index) }
         if ($dependency.StartsWith('/usr/lib/', [StringComparison]::Ordinal) -or
             $dependency.StartsWith('/System/Library/', [StringComparison]::Ordinal) -or
-            $dependency.StartsWith('@rpath/libMoltenVK.dylib', [StringComparison]::Ordinal) -or
             $dependency.StartsWith('@loader_path/', [StringComparison]::Ordinal)) {
             continue
         }

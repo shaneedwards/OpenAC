@@ -163,6 +163,9 @@ this reason: removing it touches only Intel-specific pieces, and the
 Apple-silicon lane, launcher, and client code stay as they are. Every
 Intel-only line in a file this section does not name outright carries a
 comment containing `osx-x64`; `git grep osx-x64` finds all of them.
+`tools/build-macos-x64-vulkan.ps1` pins the loader's macOS deployment target
+to `LSMinimumSystemVersion` in `tools/package-macos-launcher.ps1`; raise both
+together.
 
 Whole files to delete:
 
@@ -170,22 +173,29 @@ Whole files to delete:
 2. `tools/package-macos-x64-vulkan.ps1`
 3. Every `src/**/packages.osx-x64.lock.json`
 
-Marked lines to delete:
+Blocks to delete:
 
-1. In `.github/workflows/ci.yml`: the `macos-intel` job, the `macos-intel`
-   entry in the `release` job's `needs` and `if`, and the `osx-x64` download
-   and release steps in `release`.
-2. In `tools/publish-bin.ps1`: `-MacRid`, `-MacVulkanRuntimeDirectory`, the
-   `osx-x64` branch in the packing loop, and the `osx-x64` pair in
-   `Copy-MacArtifacts`.
+1. In `.github/workflows/ci.yml`: the `macos-intel` job, and the `osx-x64`
+   download and release steps in `release`.
+2. In `tools/publish-bin.ps1`: the `-MacRid` and `-MacVulkanRuntimeDirectory`
+   parameters, and every block marked `# osx-x64:` (the `-MacRid` check and
+   RID swap, the client staging block, the client executables override, the
+   launcher bundle block, and the release artifact pair). No upstream line in
+   this file was changed.
 3. In `GitHubWorkflowFilterContractTests`: the `osx-x64` filter assertion and
-   `ReleaseJob_DoesNotHardGateOnMacosIntel`, and point `macos-portable`'s
-   `JobBody` back at `vulkan-hardware`.
+   `ReleaseJob_DoesNotHardGateOnMacosIntel`.
 4. The `osx-x64` test cases in
    `tests/AcDream.Launcher.Core.Tests/Updates/LauncherRuntimeIdentityTests.cs`
    and `PayloadExecutableNamesTests.cs`.
 5. This section, the "macOS Vulkan runtime" Intel paragraphs above, and the
    `osx-x64` sentences added to `docs/building-and-running.md`.
+
+Shared lines to edit back to upstream:
+
+1. The `release` job's `if:` reverts to `if: startsWith(github.ref,
+   'refs/tags/v')`, and its comment reverts to the original two lines about
+   `needs` guaranteeing a red gate cannot publish.
+2. The `release` job's `needs:` list drops `macos-intel`.
 
 Launchers already installed on Intel Macs keep the client they have. A
 release without `osx-x64` payloads fails their update check, which the

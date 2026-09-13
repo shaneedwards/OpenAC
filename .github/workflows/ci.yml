@@ -205,8 +205,7 @@ jobs:
             bin/launcher-osx-arm64.zip
 
   macos-intel:
-    # osx-x64: best effort until August 2027 (O-113), on GitHub's last x86_64
-    # macOS image. A failure here never blocks a release; see release's `if`.
+    # osx-x64: GitHub's last x86_64 macOS image; a failure here never blocks the release (see release's `if`).
     runs-on: macos-15-intel
     timeout-minutes: 45
     steps:
@@ -217,9 +216,7 @@ jobs:
         with:
           global-json-file: global.json
 
-      # osx-x64: Homebrew no longer builds Intel bottles, so the x86_64 loader
-      # and MoltenVK come from pinned Khronos sources. The build script holds
-      # the pins, so hashing it keys the cache.
+      # osx-x64: keys the cache off the build script, which holds the pins.
       - name: Restore the pinned x86_64 Vulkan runtime
         uses: actions/cache@v4
         with:
@@ -351,8 +348,7 @@ jobs:
           name: macos-release-assets
           path: artifacts/macos-release-assets
 
-      # osx-x64: only downloaded when macos-intel succeeded, into the same
-      # directory, so publish-bin.ps1 sees the optional Intel pair too.
+      # osx-x64: downloaded into the same directory publish-bin.ps1 reads.
       - name: Download macOS Intel release assets
         if: needs.macos-intel.result == 'success'
         uses: actions/download-artifact@v4
@@ -393,15 +389,14 @@ jobs:
           prerelease: false
           make_latest: true
 
-      # osx-x64: attached only when macos-intel succeeded, so a failed Intel
-      # build never blocks or breaks the release the four gated jobs produced.
+      # osx-x64: attached only when macos-intel succeeds.
       - name: Attach the Intel macOS assets
         if: needs.macos-intel.result == 'success'
         uses: softprops/action-gh-release@v2
         with:
           append_body: true
           body: |
-            **macOS (Intel):** download `launcher-osx-x64.zip`. Best effort until August 2027; see docs/ci-and-releases.md.
+            **macOS (Intel):** download `launcher-osx-x64.zip`, unzip it, drag `OpenAC.app` to `~/Applications`, then open it in Finder.
           files: |
             bin/client-osx-x64.zip
             bin/launcher-osx-x64.zip

@@ -36,7 +36,7 @@ public sealed class GitHubWorkflowFilterContractTests
         foreach (Match filter in linux)
             Assert.Equal(expectedLinux, filter.Groups["filter"].Value);
 
-        string macBody = JobBody(workflow, "macos-portable", "macos-intel");
+        string macBody = JobBody(workflow, "macos-portable", "vulkan-hardware");
         Match mac = Regex.Match(
             macBody,
             "\\$filter\\s*=\\s*'(?<filter>[^']+)'",
