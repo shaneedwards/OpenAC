@@ -1,7 +1,12 @@
+using System.Collections.Immutable;
+using System.Reflection;
 using System.Text.Json;
 using System.Net;
+using AcDream.Content;
+using AcDream.Core.Chat;
 using AcDream.Core.Net;
 using AcDream.Core.Net.Messages;
+using AcDream.Core.Plugins;
 using AcDream.Headless.Configuration;
 using AcDream.Headless.Credentials;
 using AcDream.Headless.Diagnostics;
@@ -11,6 +16,8 @@ using AcDream.Plugin.Abstractions;
 using AcDream.Runtime;
 using AcDream.Runtime.Session;
 using AcDream.Tests.Fixtures.LauncherSession;
+using DatReaderWriter;
+using DatReaderWriter.Options;
 
 namespace AcDream.Headless.Tests;
 
@@ -493,6 +500,198 @@ public sealed class HeadlessPluginSessionTests
         session.Plugins.Host.Automation.Chat.PostSystemMessage("hello from autostart");
 
         Assert.Equal(before + 1, session.Runtime.Chat.Count);
+    }
+
+    [Fact]
+    public void ChatCaptureMessagesReturnsTextAddedToTheRuntimeCommunicationTranscript()
+    {
+        using var temporary = new TemporaryDirectory();
+        var credential = new HeadlessCredentialSecret("fixture", "password");
+        using var session = new HeadlessSessionHost(
+            Descriptor([], Path.Combine(temporary.Path, "status.jsonl")),
+            credential,
+            new HeadlessDiagnosticWriter(new StringWriter()),
+            new FixtureSessionOperations(),
+            pluginRoots: [temporary.Path]);
+
+        session.Runtime.CommunicationOwner.AddText(
+            "Archer tells you, buff",
+            RetailLogTextType.Tell);
+
+        PluginChatMessage message = Assert.Single(
+            session.Plugins.Host.Automation.Chat.CaptureMessages(0));
+        Assert.Equal("Archer tells you, buff", message.Text);
+    }
+
+    [Fact]
+    public void CharacterAndSpellsReportRealRuntimeStateOnceTheSessionEntersTheWorld()
+    {
+        using var temporary = new TemporaryDirectory();
+        var credential = new HeadlessCredentialSecret("fixture", "password");
+        using var session = new HeadlessSessionHost(
+            Descriptor([], Path.Combine(temporary.Path, "status.jsonl")),
+            credential,
+            new HeadlessDiagnosticWriter(new StringWriter()),
+            new FixtureSessionOperations(),
+            pluginRoots: [temporary.Path]);
+
+        Assert.Equal(0u, session.Plugins.Host.Automation.Character.ObjectId);
+        Assert.False(session.Plugins.Host.Automation.Spells.IsKnown(1u));
+
+        _ = session.Start();
+        session.Runtime.CharacterOwner.Spellbook.OnSpellLearned(1u);
+
+        Assert.Equal(0x50000001u, session.Plugins.Host.Automation.Character.ObjectId);
+        Assert.True(session.Plugins.Host.Automation.Spells.IsKnown(1u));
+    }
+
+    [Fact]
+    public void ItemsAreAvailableOnceTheSessionEntersTheWorld()
+    {
+        using var temporary = new TemporaryDirectory();
+        var credential = new HeadlessCredentialSecret("fixture", "password");
+        using var session = new HeadlessSessionHost(
+            Descriptor([], Path.Combine(temporary.Path, "status.jsonl")),
+            credential,
+            new HeadlessDiagnosticWriter(new StringWriter()),
+            new FixtureSessionOperations(),
+            pluginRoots: [temporary.Path]);
+
+        Assert.False(session.Plugins.Host.Automation.Items.IsAvailable);
+
+        _ = session.Start();
+
+        Assert.True(session.Plugins.Host.Automation.Items.IsAvailable);
+    }
+
+    [Fact]
+    public void EquipmentIsAvailableOnceTheSessionEntersTheWorld()
+    {
+        using var temporary = new TemporaryDirectory();
+        var credential = new HeadlessCredentialSecret("fixture", "password");
+        using var session = new HeadlessSessionHost(
+            Descriptor([], Path.Combine(temporary.Path, "status.jsonl")),
+            credential,
+            new HeadlessDiagnosticWriter(new StringWriter()),
+            new FixtureSessionOperations(),
+            pluginRoots: [temporary.Path]);
+
+        Assert.False(session.Plugins.Host.Automation.Equipment.IsAvailable);
+
+        _ = session.Start();
+
+        Assert.True(session.Plugins.Host.Automation.Equipment.IsAvailable);
+    }
+
+    [Trait("Lane", "InstalledDat")]
+    [Fact]
+    public void SpellComponentsResolveThroughTheSessionsContentLeaseMagicCatalog()
+    {
+        string? datDir = InstalledDatTestPath.Resolve();
+        if (datDir is null)
+        {
+            Assert.Fail(
+                "Lane=InstalledDat requires an installed retail DAT directory; see docs/release-gate.md.");
+            return;
+        }
+
+        using var dats = new DatCollection(datDir, DatAccessType.Read);
+        using var adapter = new DatCollectionAdapter(dats);
+        MagicCatalog catalog = MagicCatalog.Load(adapter);
+        SpellComponentDescriptor known = catalog.Components.Values
+            .First(static component => component.SpellComponentId != 0u);
+
+        using var temporary = new TemporaryDirectory();
+        var credential = new HeadlessCredentialSecret("fixture", "password");
+        using var contentOwner = new HeadlessProcessContentOwner(
+            ContentDescriptor(),
+            _ => { },
+            new InstalledMagicContentFactory(catalog));
+        using HeadlessProcessContentOwner.HeadlessProcessContentLease lease =
+            contentOwner.AcquireLease("headless-session");
+        using var session = new HeadlessSessionHost(
+            Descriptor([], Path.Combine(temporary.Path, "status.jsonl")),
+            credential,
+            new HeadlessDiagnosticWriter(new StringWriter()),
+            new FixtureSessionOperations(),
+            contentLease: lease,
+            pluginRoots: [temporary.Path]);
+
+        Assert.True(session.Plugins.Host.Automation.Spells.TryGetComponent(
+            known.SpellComponentId,
+            out PluginSpellComponentInfo info));
+        Assert.Equal(known.Name, info.Name);
+    }
+
+    [Fact]
+    public void SpellComponentsAreUnavailableWithoutAContentLease()
+    {
+        using var temporary = new TemporaryDirectory();
+        var credential = new HeadlessCredentialSecret("fixture", "password");
+        using var session = new HeadlessSessionHost(
+            Descriptor([], Path.Combine(temporary.Path, "status.jsonl")),
+            credential,
+            new HeadlessDiagnosticWriter(new StringWriter()),
+            new FixtureSessionOperations(),
+            pluginRoots: [temporary.Path]);
+
+        Assert.False(session.Plugins.Host.Automation.Spells.TryGetComponent(
+            4200u,
+            out _));
+    }
+
+    [Fact]
+    public void PluginStorageWrittenThroughAScopedHostReadsBackThroughAFreshSessionOverTheSameDirectory()
+    {
+        using var temporary = new TemporaryDirectory();
+        using var storageRoot = new TemporaryDirectory();
+        using (var session = new HeadlessSessionHost(
+            Descriptor([], Path.Combine(temporary.Path, "status.jsonl")),
+            new HeadlessCredentialSecret("fixture", "password"),
+            new HeadlessDiagnosticWriter(new StringWriter()),
+            new FixtureSessionOperations(),
+            pluginRoots: [temporary.Path],
+            storage: new FilePluginStorage(storageRoot.Path)))
+        {
+            var scope = new ScopedPluginHost(
+                session.Plugins.Host,
+                "acdream.test.storage",
+                "Storage fixture");
+            scope.Storage.WriteText("settings.json", "hello");
+        }
+
+        using var fresh = new HeadlessSessionHost(
+            Descriptor([], Path.Combine(temporary.Path, "fresh-status.jsonl")),
+            new HeadlessCredentialSecret("fixture", "password"),
+            new HeadlessDiagnosticWriter(new StringWriter()),
+            new FixtureSessionOperations(),
+            pluginRoots: [temporary.Path],
+            storage: new FilePluginStorage(storageRoot.Path));
+        var freshScope = new ScopedPluginHost(
+            fresh.Plugins.Host,
+            "acdream.test.storage",
+            "Storage fixture");
+
+        Assert.Equal("hello", freshScope.Storage.ReadText("settings.json"));
+    }
+
+    private static HeadlessContentDescriptor ContentDescriptor() => new()
+    {
+        DatDirectory = "fixture-dats",
+        PreparedAssetPath = "fixture.pak",
+    };
+
+    private sealed class InstalledMagicContentFactory(MagicCatalog magic)
+        : IHeadlessProcessContentFactory
+    {
+        public HeadlessOpenedProcessContent Open(
+            HeadlessContentDescriptor descriptor,
+            Action<string> diagnostic) =>
+            new(
+                DispatchProxy.Create<IDatReaderWriter, TestResourceProxy>(),
+                DispatchProxy.Create<ITestPreparedSource, TestResourceProxy>(),
+                magic,
+                ImmutableArray.CreateRange(new float[256]));
     }
 
     private static HeadlessSessionDescriptor Descriptor(
