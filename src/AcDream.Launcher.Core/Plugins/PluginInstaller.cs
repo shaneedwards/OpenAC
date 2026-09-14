@@ -18,14 +18,20 @@ public sealed class PluginInstaller
     public const string SessionLeaseRefusal =
         "Close all OpenAC sessions to install or update plugins.";
 
-    private static readonly SafeZipExtractionLimits PluginExtractionLimits = new(
-        MaximumEntries: 2_000,
-        MaximumEntryBytes: 256L * 1024 * 1024,
-        MaximumTotalBytes: 512L * 1024 * 1024,
-        MaximumCompressionRatio: 200,
-        MaximumRelativePathLength: 512);
+    /// <summary>The install-time caps from the plan's shared contract (Release contract, "Caps").
+    /// The one place they're set, so the zip download cap and the extraction limits it feeds can't
+    /// drift apart.</summary>
+    private static class ContractLimits
+    {
+        public const long MaximumZipBytes = 64L * 1024 * 1024;
 
-    private const long MaximumZipBytes = 512L * 1024 * 1024;
+        public static readonly SafeZipExtractionLimits Extraction = new(
+            MaximumEntries: 2_000,
+            MaximumEntryBytes: 64L * 1024 * 1024,
+            MaximumTotalBytes: 256L * 1024 * 1024,
+            MaximumCompressionRatio: 200,
+            MaximumRelativePathLength: 512);
+    }
 
     private readonly ApplicationPathSet _paths;
     private readonly PluginReleaseClient _releaseClient;
@@ -46,7 +52,7 @@ public sealed class PluginInstaller
         _paths = paths;
         _releaseClient = new PluginReleaseClient(httpClient);
         _downloader = new VerifiedArtifactDownloader(httpClient);
-        _extractor = new SafeZipExtractor(PluginExtractionLimits, ignoreDeclaredModes: true);
+        _extractor = new SafeZipExtractor(ContractLimits.Extraction, ignoreDeclaredModes: true);
         _recordStore = recordStore ?? throw new ArgumentNullException(nameof(recordStore));
         _inventory = inventory ?? throw new ArgumentNullException(nameof(inventory));
         _barrier = new UpdateSessionBarrier(paths.DataDirectory);
@@ -179,7 +185,7 @@ public sealed class PluginInstaller
             _ = await _downloader.DownloadAsync(
                     GitHubReleaseLocator.TaggedAsset(repo, tag, zipName),
                     shaFile.Sha256,
-                    MaximumZipBytes,
+                    ContractLimits.MaximumZipBytes,
                     zipPath,
                     progress: null,
                     cancellationToken)
@@ -255,7 +261,7 @@ public sealed class PluginInstaller
                 List<string> plugins = character.Plugins
                     .Where(id => !string.Equals(id, "none", StringComparison.OrdinalIgnoreCase))
                     .ToList();
-                if (!plugins.Contains(pluginId, StringComparer.Ordinal))
+                if (!plugins.Contains(pluginId, StringComparer.OrdinalIgnoreCase))
                 {
                     plugins.Add(pluginId);
                 }
@@ -291,7 +297,7 @@ public sealed class PluginInstaller
             }
 
             _recordStore.Records.RemoveAll(record =>
-                string.Equals(record.Id, id, StringComparison.Ordinal));
+                string.Equals(record.Id, id, StringComparison.OrdinalIgnoreCase));
             _recordStore.Save();
 
             if (deleteStorage)
@@ -482,7 +488,7 @@ public sealed class PluginInstaller
     private void Upsert(InstalledPluginRecord record)
     {
         int index = _recordStore.Records.FindIndex(
-            candidate => string.Equals(candidate.Id, record.Id, StringComparison.Ordinal));
+            candidate => string.Equals(candidate.Id, record.Id, StringComparison.OrdinalIgnoreCase));
         if (index >= 0)
         {
             _recordStore.Records[index] = record;
@@ -510,7 +516,7 @@ public sealed class PluginInstaller
     private static PluginInstallSource DetermineSource(PluginCatalog? catalog, string id, string repo) =>
         catalog is not null
         && catalog.Plugins.Any(entry =>
-            string.Equals(entry.Id, id, StringComparison.Ordinal)
+            string.Equals(entry.Id, id, StringComparison.OrdinalIgnoreCase)
             && string.Equals(entry.Repo, repo, StringComparison.Ordinal))
             ? PluginInstallSource.Listed
             : PluginInstallSource.Unlisted;

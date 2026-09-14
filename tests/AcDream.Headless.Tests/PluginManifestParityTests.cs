@@ -91,6 +91,40 @@ public sealed class PluginManifestParityTests
         Assert.Equal(coreReason, launcherReason);
     }
 
+    [Theory]
+    [MemberData(nameof(InvalidManifestCorpus))]
+    public void BothReadersRejectAnInvalidManifest(string json)
+    {
+        Assert.Throws<PluginManifestException>(() => PluginManifest.Parse(json));
+        Assert.Throws<LauncherPluginManifestException>(() => LauncherPluginManifest.Parse(json));
+    }
+
+    /// <summary>Divergence from Core, recorded rather than fixed there (PR 1 is already proven at
+    /// runtime): Core's <see cref="PluginManifest.Parse"/> lets a duplicate property's last value win
+    /// silently; the launcher's own reader refuses one outright.</summary>
+    [Theory]
+    [InlineData("""{"id":"edwards.hello","id":"edwards.other","displayName":"Hello","version":"0.1.0","entryDll":"Hello.dll","apiVersion":1}""")]
+    [InlineData("""{"Id":"edwards.hello","id":"edwards.other","displayName":"Hello","version":"0.1.0","entryDll":"Hello.dll","apiVersion":1}""")]
+    public void CoreAcceptsADuplicatePropertyButTheLauncherReaderRejectsIt(string json)
+    {
+        PluginManifest.Parse(json);
+        Assert.Throws<LauncherPluginManifestException>(() => LauncherPluginManifest.Parse(json));
+    }
+
+    public static TheoryData<string> InvalidManifestCorpus()
+    {
+        return new TheoryData<string>
+        {
+            ManifestJson("0.1.0", null, null, hosts: ""),
+            ManifestJson("0.1.0", null, null, "bogus-host"),
+            ManifestJson("01.0.0", null, null, null),
+            ManifestJson("v1.0.0", null, null, null),
+            ManifestJson("1.0", null, null, null),
+            ManifestJson("1.0.0-beta", null, null, null),
+            ManifestJson("0.2.0", "0.1.0", null, null),
+        };
+    }
+
     public static TheoryData<string> SampleManifestPaths()
     {
         string root = FindRepositoryRoot();

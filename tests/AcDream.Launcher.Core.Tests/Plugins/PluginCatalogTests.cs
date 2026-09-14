@@ -96,6 +96,10 @@ public sealed class PluginCatalogTests
     [InlineData("/openac-plugin-hello")]
     [InlineData("shane edwards/openac-plugin-hello")]
     [InlineData("shaneedwards/openac plugin hello")]
+    [InlineData("-shaneedwards/openac-plugin-hello")]
+    [InlineData("shane--edwards/openac-plugin-hello")]
+    [InlineData("shaneedwards/..")]
+    [InlineData("shaneedwards/.")]
     public void RejectsABadRepo(string repo)
     {
         Assert.Throws<LauncherUpdateException>(() => PluginCatalog.Parse($$"""
@@ -104,6 +108,20 @@ public sealed class PluginCatalogTests
               "plugins": [
                 { "id": "edwards.hello", "name": "Hello", "author": "Shane Edwards",
                   "description": "Says hello.", "repo": "{{repo}}" }
+              ]
+            }
+            """));
+    }
+
+    [Fact]
+    public void RejectsARepoWithATrailingNewline()
+    {
+        Assert.Throws<LauncherUpdateException>(() => PluginCatalog.Parse("""
+            {
+              "schemaVersion": 1,
+              "plugins": [
+                { "id": "edwards.hello", "name": "Hello", "author": "Shane Edwards",
+                  "description": "Says hello.", "repo": "shaneedwards/openac-plugin-hello\n" }
               ]
             }
             """));
@@ -123,6 +141,41 @@ public sealed class PluginCatalogTests
               ]
             }
             """));
+    }
+
+    [Fact]
+    public void RejectsACaseVariantDuplicatePluginId()
+    {
+        Assert.Throws<LauncherUpdateException>(() => PluginCatalog.Parse("""
+            {
+              "schemaVersion": 1,
+              "plugins": [
+                { "id": "edwards.hello", "name": "Hello", "author": "Shane Edwards",
+                  "description": "Says hello.", "repo": "shaneedwards/openac-plugin-hello" },
+                { "id": "Edwards.Hello", "name": "Hello Again", "author": "Shane Edwards",
+                  "description": "Also says hello.", "repo": "shaneedwards/openac-plugin-hello-2" }
+              ]
+            }
+            """));
+    }
+
+    [Fact]
+    public void IsBlockedIgnoresCase()
+    {
+        PluginCatalog catalog = PluginCatalog.Parse("""
+            {
+              "schemaVersion": 1,
+              "plugins": [
+                { "id": "edwards.hello", "name": "Hello", "author": "Shane Edwards",
+                  "description": "Says hello.", "repo": "shaneedwards/openac-plugin-hello" }
+              ],
+              "blocked": [
+                { "id": "someone.bad", "versions": ["*"], "reason": "Sends chat spam." }
+              ]
+            }
+            """);
+
+        Assert.True(catalog.IsBlocked("Someone.Bad", version: null));
     }
 
     [Fact]
