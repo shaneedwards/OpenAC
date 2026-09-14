@@ -47,9 +47,16 @@ The **Plugins** tab lists what is installed and what is available to install
 from the curated list. **Discover** shows plugins not yet installed;
 **Install** downloads and unzips one, but never runs it. **Installed** shows
 what is on disk, with **Update** and **Remove** for plugins the launcher
-itself installed. **Check now** refreshes both lists; the launcher also
-checks once at startup, without delaying the window. **Add from URL** adds
-a plugin from a `https://github.com/owner/name` repository not on the list.
+itself installed. Removing a plugin also unticks it for every character that
+had it enabled, so reinstalling it always starts from none. **Check now**
+refreshes both lists; the launcher also checks once at startup, without
+delaying the window. **Add from URL** adds a plugin from a
+`https://github.com/owner/name` repository not on the list.
+
+Every row shows its compatibility with the installed client: compatible and
+which version, graphical-only or headless-only when the plugin restricts
+itself to one host, the incompatibility reason, or that no client is
+installed yet.
 
 A plugin from the curated list shows a short warning before install. A
 plugin added by URL warns that OpenAC has not reviewed it. The warning text

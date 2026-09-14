@@ -20,7 +20,8 @@ public sealed record InstalledPluginInfo(
     InstalledPluginSource Source,
     string Directory,
     string? Repo,
-    string? Compatibility,
+    string Compatibility,
+    bool CompatibilityIsWarning,
     string? Blocked,
     bool Conflict);
 
@@ -163,6 +164,8 @@ public sealed class PluginInventory
         string? blocked = LauncherVersion.TryParse(manifest.Version, out LauncherVersion? version)
             ? FindBlockReason(catalog, manifest.Id, version)
             : null;
+        LauncherPluginCompatibility.CompatibilityDescription compatibility =
+            LauncherPluginCompatibility.Describe(manifest, clientVersion);
         return new InstalledPluginInfo(
             manifest.Id,
             manifest.DisplayName,
@@ -170,7 +173,8 @@ public sealed class PluginInventory
             source,
             directory,
             repo,
-            EvaluateVersionCompatibility(manifest, clientVersion),
+            compatibility.Text,
+            compatibility.IsWarning,
             blocked,
             Conflict: false);
     }

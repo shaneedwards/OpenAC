@@ -103,6 +103,78 @@ public sealed class LauncherPluginCompatibilityTests
             LauncherVersion.Parse("0.1.7")));
     }
 
+    [Fact]
+    public void DescribeReportsCompatibleWithTheInstalledClientOnBothHosts()
+    {
+        LauncherPluginManifest manifest = Manifest(minHostVersion: "0.1.0");
+
+        LauncherPluginCompatibility.CompatibilityDescription description =
+            LauncherPluginCompatibility.Describe(manifest, LauncherVersion.Parse("0.1.7"));
+
+        Assert.Equal("Compatible with OpenAC 0.1.7", description.Text);
+        Assert.False(description.IsWarning);
+    }
+
+    [Fact]
+    public void DescribeReportsNoClientInstalledWithoutRunningTheHostCheck()
+    {
+        LauncherPluginManifest manifest = Manifest(minHostVersion: "0.1.0", hosts: ["headless"]);
+
+        LauncherPluginCompatibility.CompatibilityDescription description =
+            LauncherPluginCompatibility.Describe(manifest, clientVersion: null);
+
+        Assert.Equal("Client not installed", description.Text);
+        Assert.False(description.IsWarning);
+    }
+
+    [Fact]
+    public void DescribeReportsGraphicalOnlyWhenTheHostRestrictionIsTheOnlyIssue()
+    {
+        LauncherPluginManifest manifest = Manifest(minHostVersion: "0.1.0", hosts: ["graphical"]);
+
+        LauncherPluginCompatibility.CompatibilityDescription description =
+            LauncherPluginCompatibility.Describe(manifest, LauncherVersion.Parse("0.1.7"));
+
+        Assert.Equal("Graphical only", description.Text);
+        Assert.False(description.IsWarning);
+    }
+
+    [Fact]
+    public void DescribeReportsHeadlessOnlyWhenTheHostRestrictionIsTheOnlyIssue()
+    {
+        LauncherPluginManifest manifest = Manifest(minHostVersion: "0.1.0", hosts: ["headless"]);
+
+        LauncherPluginCompatibility.CompatibilityDescription description =
+            LauncherPluginCompatibility.Describe(manifest, LauncherVersion.Parse("0.1.7"));
+
+        Assert.Equal("Headless only", description.Text);
+        Assert.False(description.IsWarning);
+    }
+
+    [Fact]
+    public void DescribeReportsTheReasonAsAWarningWhenBothHostsAreIncompatible()
+    {
+        LauncherPluginManifest manifest = Manifest(minHostVersion: "0.2.0");
+
+        LauncherPluginCompatibility.CompatibilityDescription description =
+            LauncherPluginCompatibility.Describe(manifest, LauncherVersion.Parse("0.1.7"));
+
+        Assert.Equal("requires OpenAC 0.2.0 or newer (this is 0.1.7)", description.Text);
+        Assert.True(description.IsWarning);
+    }
+
+    [Fact]
+    public void DescribeReportsTheVersionReasonEvenWhenTheOnlySupportedHostAlsoFailsVersion()
+    {
+        LauncherPluginManifest manifest = Manifest(minHostVersion: "0.2.0", hosts: ["headless"]);
+
+        LauncherPluginCompatibility.CompatibilityDescription description =
+            LauncherPluginCompatibility.Describe(manifest, LauncherVersion.Parse("0.1.7"));
+
+        Assert.Equal("requires OpenAC 0.2.0 or newer (this is 0.1.7)", description.Text);
+        Assert.True(description.IsWarning);
+    }
+
     private static LauncherPluginManifest Manifest(
         string minHostVersion,
         string? maxHostVersion = null,

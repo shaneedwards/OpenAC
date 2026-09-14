@@ -2,6 +2,7 @@ using System.Net;
 using AcDream.Launcher.Core.Orchestration;
 using AcDream.Launcher.Core.Plugins;
 using AcDream.Launcher.Core.Profiles;
+using AcDream.Launcher.Core.Updates;
 using AcDream.Launcher.ViewModels;
 using AcDream.Platform;
 
@@ -180,7 +181,8 @@ public sealed partial class LauncherWindowViewModelTests
         await viewModel.Plugins.RefreshDiscoverDetailsAsync();
 
         Assert.Equal("0.2.0", row.LatestVersion);
-        Assert.Equal(LauncherPluginCompatibility.ClientNotInstalled, row.Compatibility);
+        Assert.Equal("Client not installed", row.Compatibility);
+        Assert.False(row.CompatibilityIsWarning);
         int detailRequests = handler.Requests.Count(uri => uri == GitHubReleaseLocator.LatestAsset(
             "shaneedwards/openac-plugin-hello", "plugin.json"));
         Assert.Equal(1, detailRequests);
@@ -320,6 +322,152 @@ public sealed partial class LauncherWindowViewModelTests
         Assert.Contains("edwards.headless-only", update.Plugins);
         Assert.Contains("+Graphical", viewModel.Plugins.Error);
         Assert.Contains("does not support that launch mode", viewModel.Plugins.Error);
+    }
+
+    [Fact]
+    public async Task RemovingStripsTheIdFromEveryCharacterThatHadItAndLeavesOtherIds()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator
+        {
+            ServersOverride =
+            [
+                new LauncherServerSnapshot("Local ACE", "127.0.0.1", 9000,
+                [
+                    new LauncherAccountSnapshot("Local ACE", "testaccount",
+                    [
+                        new LauncherCharacterSnapshot(
+                            "Local ACE", "testaccount", "+Holder", "0x50000001",
+                            LaunchMode.Headless, ["edwards.managed", "other.plugin"], [], false, "Ready"),
+                        new LauncherCharacterSnapshot(
+                            "Local ACE", "testaccount", "+AlsoHolder", "0x50000002",
+                            LaunchMode.Headless, ["edwards.managed"], [], false, "Ready"),
+                        new LauncherCharacterSnapshot(
+                            "Local ACE", "testaccount", "+Untouched", "0x50000003",
+                            LaunchMode.Headless, ["other.plugin"], [], false, "Ready"),
+                    ],
+                    HasRunningActivity: false,
+                    ActivityStatus: "Ready"),
+                ]),
+            ],
+        };
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
+        managed.RemoveCommand!.Execute(null);
+        viewModel.Plugins.ConfirmRemoveCommand.Execute(null);
+
+        Assert.Equal(2, orchestrator.SettingsUpdates.Count);
+        var holder = Assert.Single(orchestrator.SettingsUpdates, update => update.Character == "+Holder");
+        Assert.Equal(["other.plugin"], holder.Plugins);
+        var alsoHolder = Assert.Single(orchestrator.SettingsUpdates, update => update.Character == "+AlsoHolder");
+        Assert.Empty(alsoHolder.Plugins);
+        Assert.DoesNotContain(orchestrator.SettingsUpdates, update => update.Character == "+Untouched");
+    }
+
+    [Fact]
+    public async Task ReinstallWithNoneAfterARemoveLeavesEveryListWithoutTheId()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator
+        {
+            ServersOverride =
+            [
+                new LauncherServerSnapshot("Local ACE", "127.0.0.1", 9000,
+                [
+                    new LauncherAccountSnapshot("Local ACE", "testaccount",
+                    [
+                        new LauncherCharacterSnapshot(
+                            "Local ACE", "testaccount", "+Holder", "0x50000001",
+                            LaunchMode.Headless, ["edwards.managed"], [], false, "Ready"),
+                    ],
+                    HasRunningActivity: false,
+                    ActivityStatus: "Ready"),
+                ]),
+            ],
+        };
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
+        managed.RemoveCommand!.Execute(null);
+        viewModel.Plugins.ConfirmRemoveCommand.Execute(null);
+
+        // The install dialog's "None" choice never calls EnableForCharacters (its own tests
+        // confirm this), so a reinstall like the LP-11 report never re-adds the id itself; the
+        // removed id staying off the list depends entirely on the remove having stripped it.
+        var update = Assert.Single(orchestrator.SettingsUpdates, u => u.Character == "+Holder");
+        Assert.DoesNotContain("edwards.managed", update.Plugins, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AFailedRemoveStripsNothing()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator
+        {
+            ServersOverride =
+            [
+                new LauncherServerSnapshot("Local ACE", "127.0.0.1", 9000,
+                [
+                    new LauncherAccountSnapshot("Local ACE", "testaccount",
+                    [
+                        new LauncherCharacterSnapshot(
+                            "Local ACE", "testaccount", "+Holder", "0x50000001",
+                            LaunchMode.Headless, ["edwards.managed"], [], false, "Ready"),
+                    ],
+                    HasRunningActivity: false,
+                    ActivityStatus: "Ready"),
+                ]),
+            ],
+        };
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
+        managed.RemoveCommand!.Execute(null);
+
+        var barrier = new UpdateSessionBarrier(fixture.Paths.DataDirectory);
+        Assert.True(barrier.TryAcquireExclusive(out UpdateSessionBarrier.ExclusiveLease? lease));
+        using (lease)
+        {
+            viewModel.Plugins.ConfirmRemoveCommand.Execute(null);
+        }
+
+        Assert.Equal(PluginInstaller.SessionLeaseRefusal, viewModel.Plugins.Error);
+        Assert.Empty(orchestrator.SettingsUpdates);
+        Assert.True(Directory.Exists(Path.Combine(fixture.Paths.PluginsDirectory, "edwards.managed")));
     }
 
     private sealed class PluginPanelFixture : IDisposable
