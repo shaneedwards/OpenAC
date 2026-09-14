@@ -91,7 +91,7 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
     }
 
     [Fact]
-    public void FindLooksUpByOrdinalId()
+    public void FindLooksUpCaseInsensitively()
     {
         var store = new InstalledPluginRecordStore(
             Path.Combine(_root, "app", "plugins-installed.json"));
@@ -108,7 +108,7 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
 
         Assert.NotNull(store.Find("edwards.hello"));
         Assert.Null(store.Find("edwards.other"));
-        Assert.Null(store.Find("EDWARDS.HELLO"));
+        Assert.NotNull(store.Find("EDWARDS.HELLO"));
     }
 
     [Fact]
@@ -126,6 +126,33 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
                   "installedAt": "2026-01-01T00:00:00Z", "warningAcceptedAt": null,
                   "pending": null },
                 { "id": "edwards.hello", "repo": "shaneedwards/openac-plugin-hello",
+                  "source": "listed", "version": "0.1.1", "tag": "v0.1.1",
+                  "zipSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "installedAt": "2026-01-01T00:00:00Z", "warningAcceptedAt": null,
+                  "pending": null }
+              ]
+            }
+            """);
+
+        var store = new InstalledPluginRecordStore(path);
+        Assert.Throws<LauncherUpdateException>(() => store.Load());
+    }
+
+    [Fact]
+    public void CaseVariantDuplicateIdsOnDiskAreRejected()
+    {
+        string path = Path.Combine(_root, "app", "plugins-installed.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """
+            {
+              "schemaVersion": 1,
+              "plugins": [
+                { "id": "edwards.hello", "repo": "shaneedwards/openac-plugin-hello",
+                  "source": "listed", "version": "0.1.0", "tag": "v0.1.0",
+                  "zipSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "installedAt": "2026-01-01T00:00:00Z", "warningAcceptedAt": null,
+                  "pending": null },
+                { "id": "Edwards.Hello", "repo": "shaneedwards/openac-plugin-hello",
                   "source": "listed", "version": "0.1.1", "tag": "v0.1.1",
                   "zipSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                   "installedAt": "2026-01-01T00:00:00Z", "warningAcceptedAt": null,

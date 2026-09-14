@@ -49,6 +49,15 @@ public sealed class LauncherPluginManifestTests
         Assert.Equal("edwards.hello", manifest.Id);
     }
 
+    [Fact]
+    public void ValidateForInstallRejectsAnIdWithATrailingNewline()
+    {
+        LauncherPluginManifest manifest = LauncherPluginManifest.Parse(
+            ValidJson.Replace("\"edwards.hello\"", "\"edwards.hello\\n\""));
+
+        Assert.Throws<LauncherPluginManifestException>(manifest.ValidateForInstall);
+    }
+
     [Theory]
     [InlineData("hello")]
     [InlineData("Edwards.Hello")]

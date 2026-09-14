@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using AcDream.Launcher.Core.Updates;
 
 namespace AcDream.Launcher.Core.Plugins;
@@ -34,10 +33,6 @@ public sealed record PluginCatalog(
     public static Uri ProductionListUri { get; } =
         GitHubReleaseLocator.LatestAsset("shaneedwards/openac-plugins", "plugins.json");
 
-    private static readonly Regex RepoPattern = new(
-        @"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$",
-        RegexOptions.Compiled);
-
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -50,7 +45,7 @@ public sealed record PluginCatalog(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         return Blocked.Any(block =>
-            string.Equals(block.Id, id, StringComparison.Ordinal)
+            string.Equals(block.Id, id, StringComparison.OrdinalIgnoreCase)
             && (version is null || block.Matches(version.Value)));
     }
 
@@ -112,7 +107,7 @@ public sealed record PluginCatalog(
         }
 
         var result = new List<PluginCatalogEntry>(entries.Count);
-        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (EntryDocument entry in entries)
         {
             RequireField(entry.Id, "plugins[].id");
@@ -120,7 +115,7 @@ public sealed record PluginCatalog(
             RequireField(entry.Author, "plugins[].author");
             RequireField(entry.Description, "plugins[].description");
             RequireField(entry.Repo, "plugins[].repo");
-            if (!RepoPattern.IsMatch(entry.Repo!))
+            if (!GitHubReleaseLocator.IsValidRepo(entry.Repo!))
             {
                 throw new LauncherUpdateException(
                     $"Plugin list entry '{entry.Id}' has an invalid repo '{entry.Repo}'.");

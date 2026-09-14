@@ -111,7 +111,7 @@ public sealed class InstalledPluginRecordStore
         }
 
         List<InstalledPluginRecord> records = document.Plugins ?? [];
-        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (InstalledPluginRecord record in records)
         {
             if (string.IsNullOrWhiteSpace(record.Id) || string.IsNullOrWhiteSpace(record.Repo))
@@ -177,7 +177,7 @@ public sealed class InstalledPluginRecordStore
     public InstalledPluginRecord? Find(string id)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
-        return Records.Find(record => string.Equals(record.Id, id, StringComparison.Ordinal));
+        return Records.Find(record => string.Equals(record.Id, id, StringComparison.OrdinalIgnoreCase));
     }
 
     private void EnsureExistingFilePermissions()

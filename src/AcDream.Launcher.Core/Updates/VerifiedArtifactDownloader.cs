@@ -42,140 +42,15 @@ public sealed class VerifiedArtifactDownloader
             throw new LauncherUpdateException("The requested artifact metadata is invalid.");
         }
 
-        string fullPath = Path.GetFullPath(destinationPath);
-        Directory.CreateDirectory(
-            Path.GetDirectoryName(fullPath)
-            ?? throw new InvalidOperationException(
-                "The artifact staging path has no parent directory."));
-
-        bool ownsDestination = false;
-        try
-        {
-            using HttpResponseMessage response = await SendWithValidatedRedirectsAsync(
-                    _httpClient,
-                    artifact.Url,
-                    "release artifact",
-                    onRedirect: null,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength is long contentLength
-                && contentLength != artifact.Size)
-            {
-                throw new LauncherUpdateException(
-                    $"Artifact size header mismatch: expected {artifact.Size}, "
-                    + $"received {contentLength}.");
-            }
-
-            if (response.Content.Headers.ContentEncoding.Count != 0)
-            {
-                throw new LauncherUpdateException(
-                    "Release artifact content encoding is not allowed.");
-            }
-
-            await using Stream input = await response.Content
-                .ReadAsStreamAsync(cancellationToken)
-                .ConfigureAwait(false);
-            await using var output = new FileStream(
-                fullPath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                BufferSize,
-                FileOptions.Asynchronous
-                | FileOptions.SequentialScan
-                | FileOptions.WriteThrough);
-            ownsDestination = true;
-            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
-            long received = 0;
-            try
-            {
-                progress?.Report(new ArtifactDownloadProgress(0, artifact.Size));
-                while (true)
-                {
-                    int read = await input.ReadAsync(
-                            buffer.AsMemory(0, BufferSize),
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    if (read == 0)
-                    {
-                        break;
-                    }
-
-                    received = checked(received + read);
-                    if (received > artifact.Size)
-                    {
-                        throw new LauncherUpdateException(
-                            $"Artifact exceeded its declared size of {artifact.Size} bytes.");
-                    }
-
-                    hash.AppendData(buffer, 0, read);
-                    await output.WriteAsync(
-                            buffer.AsMemory(0, read),
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    progress?.Report(new ArtifactDownloadProgress(received, artifact.Size));
-                }
-
-                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                output.Flush(flushToDisk: true);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
-            }
-
-            if (received != artifact.Size)
-            {
-                throw new LauncherUpdateException(
-                    $"Artifact ended at {received} bytes; expected {artifact.Size}.");
-            }
-
-            string actualSha256 = Convert.ToHexStringLower(hash.GetHashAndReset());
-            if (!string.Equals(
-                    actualSha256,
-                    artifact.Sha256,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new LauncherUpdateException(
-                    "Artifact SHA-256 does not match the release manifest.");
-            }
-
-            return new VerifiedArtifactDownload(fullPath, received, actualSha256);
-        }
-        catch (OperationCanceledException)
-        {
-            if (ownsDestination)
-            {
-                TryDelete(fullPath);
-            }
-
-            throw;
-        }
-        catch (LauncherUpdateException)
-        {
-            if (ownsDestination)
-            {
-                TryDelete(fullPath);
-            }
-
-            throw;
-        }
-        catch (Exception ex) when (ex is HttpRequestException
-                                   or IOException
-                                   or UnauthorizedAccessException
-                                   or CryptographicException)
-        {
-            if (ownsDestination)
-            {
-                TryDelete(fullPath);
-            }
-
-            throw new LauncherUpdateException(
-                $"The release artifact could not be downloaded: {ex.Message}",
-                ex);
-        }
+        return await DownloadCoreAsync(
+                artifact.Url,
+                artifact.Sha256,
+                maximumBytes: artifact.Size,
+                exactSize: artifact.Size,
+                destinationPath,
+                progress,
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>Downloads an artifact whose exact size isn't known up front, rejecting anything past
@@ -198,6 +73,31 @@ public sealed class VerifiedArtifactDownloader
             throw new LauncherUpdateException("The requested artifact metadata is invalid.");
         }
 
+        return await DownloadCoreAsync(
+                url,
+                sha256,
+                maximumBytes,
+                exactSize: null,
+                destinationPath,
+                progress,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>The stream/hash/write/cleanup core both download modes share: an exact
+    /// <paramref name="exactSize"/> enforces itself as a hard byte count and a mismatched
+    /// <c>Content-Length</c> header fails fast; its absence falls back to
+    /// <paramref name="maximumBytes"/> as a ceiling only, the L-307 mode the plugin client
+    /// uses.</summary>
+    private async Task<VerifiedArtifactDownload> DownloadCoreAsync(
+        Uri url,
+        string sha256,
+        long maximumBytes,
+        long? exactSize,
+        string destinationPath,
+        IProgress<ArtifactDownloadProgress>? progress,
+        CancellationToken cancellationToken)
+    {
         string fullPath = Path.GetFullPath(destinationPath);
         Directory.CreateDirectory(
             Path.GetDirectoryName(fullPath)
@@ -216,7 +116,16 @@ public sealed class VerifiedArtifactDownloader
                 .ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             long? declaredLength = response.Content.Headers.ContentLength;
-            if (declaredLength is long length && length > maximumBytes)
+            if (exactSize is long expectedSize)
+            {
+                if (declaredLength is long length && length != expectedSize)
+                {
+                    throw new LauncherUpdateException(
+                        $"Artifact size header mismatch: expected {expectedSize}, "
+                        + $"received {length}.");
+                }
+            }
+            else if (declaredLength is long length && length > maximumBytes)
             {
                 throw new LauncherUpdateException(
                     $"Artifact size header {length} exceeds the maximum of "
@@ -229,7 +138,8 @@ public sealed class VerifiedArtifactDownloader
                     "Release artifact content encoding is not allowed.");
             }
 
-            long progressTotal = declaredLength ?? maximumBytes;
+            long progressTotal = exactSize ?? declaredLength ?? maximumBytes;
+            long limit = exactSize ?? maximumBytes;
             await using Stream input = await response.Content
                 .ReadAsStreamAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -261,10 +171,11 @@ public sealed class VerifiedArtifactDownloader
                     }
 
                     received = checked(received + read);
-                    if (received > maximumBytes)
+                    if (received > limit)
                     {
-                        throw new LauncherUpdateException(
-                            $"Artifact exceeded the maximum of {maximumBytes} bytes.");
+                        throw new LauncherUpdateException(exactSize is long declared
+                            ? $"Artifact exceeded its declared size of {declared} bytes."
+                            : $"Artifact exceeded the maximum of {maximumBytes} bytes.");
                     }
 
                     hash.AppendData(buffer, 0, read);
@@ -283,14 +194,18 @@ public sealed class VerifiedArtifactDownloader
                 ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
             }
 
-            string actualSha256 = Convert.ToHexStringLower(hash.GetHashAndReset());
-            if (!string.Equals(
-                    actualSha256,
-                    sha256,
-                    StringComparison.OrdinalIgnoreCase))
+            if (exactSize is long finalExpectedSize && received != finalExpectedSize)
             {
                 throw new LauncherUpdateException(
-                    "Artifact SHA-256 does not match the expected value.");
+                    $"Artifact ended at {received} bytes; expected {finalExpectedSize}.");
+            }
+
+            string actualSha256 = Convert.ToHexStringLower(hash.GetHashAndReset());
+            if (!string.Equals(actualSha256, sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new LauncherUpdateException(exactSize is not null
+                    ? "Artifact SHA-256 does not match the release manifest."
+                    : "Artifact SHA-256 does not match the expected value.");
             }
 
             return new VerifiedArtifactDownload(fullPath, received, actualSha256);

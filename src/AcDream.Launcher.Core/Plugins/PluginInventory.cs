@@ -49,7 +49,7 @@ public sealed class PluginInventory
             : null;
 
         var results = new List<InstalledPluginInfo>();
-        var placedIds = new HashSet<string>(StringComparer.Ordinal);
+        var placedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach ((string ownDirectory, LauncherPluginManifest manifest) in ScanManifests(
                      _paths.PluginsDirectory))
         {
@@ -68,7 +68,7 @@ public sealed class PluginInventory
                 clientVersion));
         }
 
-        var bundledIds = new HashSet<string>(StringComparer.Ordinal);
+        var bundledIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (bundledDirectory is not null)
         {
             foreach ((string ownDirectory, LauncherPluginManifest manifest) in ScanManifests(
@@ -107,7 +107,7 @@ public sealed class PluginInventory
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         return Build(clientResolution, catalog)
-            .FirstOrDefault(info => string.Equals(info.Id, id, StringComparison.Ordinal));
+            .FirstOrDefault(info => string.Equals(info.Id, id, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>The version-only compatibility verdict (min/max/skip host version) a manifest gets
@@ -148,7 +148,7 @@ public sealed class PluginInventory
         string id,
         LauncherVersion pluginVersion) =>
         catalog?.Blocked.FirstOrDefault(block =>
-                string.Equals(block.Id, id, StringComparison.Ordinal)
+                string.Equals(block.Id, id, StringComparison.OrdinalIgnoreCase)
                 && block.Matches(pluginVersion.Value))
             ?.Reason;
 
