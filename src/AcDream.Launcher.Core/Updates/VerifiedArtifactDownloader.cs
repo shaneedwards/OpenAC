@@ -52,7 +52,10 @@ public sealed class VerifiedArtifactDownloader
         try
         {
             using HttpResponseMessage response = await SendWithValidatedRedirectsAsync(
+                    _httpClient,
                     artifact.Url,
+                    "release artifact",
+                    onRedirect: null,
                     cancellationToken)
                 .ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
@@ -175,8 +178,164 @@ public sealed class VerifiedArtifactDownloader
         }
     }
 
-    private async Task<HttpResponseMessage> SendWithValidatedRedirectsAsync(
+    /// <summary>Downloads an artifact whose exact size isn't known up front, rejecting anything past
+    /// <paramref name="maximumBytes"/>. The SHA-256 check is the integrity guarantee (L-307).</summary>
+    public async Task<VerifiedArtifactDownload> DownloadAsync(
+        Uri url,
+        string sha256,
+        long maximumBytes,
+        string destinationPath,
+        IProgress<ArtifactDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(url);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+        ReleaseManifestClient.RequireSecureOrLoopback(url, "artifact");
+        if (maximumBytes <= 0
+            || maximumBytes > ReleaseManifestClient.MaximumArtifactBytes
+            || !ReleaseManifestClient.IsSha256(sha256))
+        {
+            throw new LauncherUpdateException("The requested artifact metadata is invalid.");
+        }
+
+        string fullPath = Path.GetFullPath(destinationPath);
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(fullPath)
+            ?? throw new InvalidOperationException(
+                "The artifact staging path has no parent directory."));
+
+        bool ownsDestination = false;
+        try
+        {
+            using HttpResponseMessage response = await SendWithValidatedRedirectsAsync(
+                    _httpClient,
+                    url,
+                    "release artifact",
+                    onRedirect: null,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            long? declaredLength = response.Content.Headers.ContentLength;
+            if (declaredLength is long length && length > maximumBytes)
+            {
+                throw new LauncherUpdateException(
+                    $"Artifact size header {length} exceeds the maximum of "
+                    + $"{maximumBytes} bytes.");
+            }
+
+            if (response.Content.Headers.ContentEncoding.Count != 0)
+            {
+                throw new LauncherUpdateException(
+                    "Release artifact content encoding is not allowed.");
+            }
+
+            long progressTotal = declaredLength ?? maximumBytes;
+            await using Stream input = await response.Content
+                .ReadAsStreamAsync(cancellationToken)
+                .ConfigureAwait(false);
+            await using var output = new FileStream(
+                fullPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                BufferSize,
+                FileOptions.Asynchronous
+                | FileOptions.SequentialScan
+                | FileOptions.WriteThrough);
+            ownsDestination = true;
+            using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
+            long received = 0;
+            try
+            {
+                progress?.Report(new ArtifactDownloadProgress(0, progressTotal));
+                while (true)
+                {
+                    int read = await input.ReadAsync(
+                            buffer.AsMemory(0, BufferSize),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    received = checked(received + read);
+                    if (received > maximumBytes)
+                    {
+                        throw new LauncherUpdateException(
+                            $"Artifact exceeded the maximum of {maximumBytes} bytes.");
+                    }
+
+                    hash.AppendData(buffer, 0, read);
+                    await output.WriteAsync(
+                            buffer.AsMemory(0, read),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    progress?.Report(new ArtifactDownloadProgress(received, progressTotal));
+                }
+
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                output.Flush(flushToDisk: true);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
+            }
+
+            string actualSha256 = Convert.ToHexStringLower(hash.GetHashAndReset());
+            if (!string.Equals(
+                    actualSha256,
+                    sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new LauncherUpdateException(
+                    "Artifact SHA-256 does not match the expected value.");
+            }
+
+            return new VerifiedArtifactDownload(fullPath, received, actualSha256);
+        }
+        catch (OperationCanceledException)
+        {
+            if (ownsDestination)
+            {
+                TryDelete(fullPath);
+            }
+
+            throw;
+        }
+        catch (LauncherUpdateException)
+        {
+            if (ownsDestination)
+            {
+                TryDelete(fullPath);
+            }
+
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException
+                                   or IOException
+                                   or UnauthorizedAccessException
+                                   or CryptographicException)
+        {
+            if (ownsDestination)
+            {
+                TryDelete(fullPath);
+            }
+
+            throw new LauncherUpdateException(
+                $"The release artifact could not be downloaded: {ex.Message}",
+                ex);
+        }
+    }
+
+    /// <summary>Follows redirects with the same transport checks the manifest client uses, shared by
+    /// both download methods and the plugin release client.</summary>
+    internal static async Task<HttpResponseMessage> SendWithValidatedRedirectsAsync(
+        HttpClient httpClient,
         Uri initialUri,
+        string subject,
+        Action<Uri>? onRedirect,
         CancellationToken cancellationToken)
     {
         bool allowLoopbackHttp = initialUri.Scheme == Uri.UriSchemeHttp
@@ -187,16 +346,16 @@ public sealed class VerifiedArtifactDownloader
         {
             ReleaseManifestClient.RequireTransport(
                 current,
-                "artifact redirect",
+                $"{subject} redirect",
                 allowLoopbackHttp);
             if (!visited.Add(current.AbsoluteUri))
             {
                 throw new LauncherUpdateException(
-                    "The release artifact redirect chain contains a loop.");
+                    $"The {subject} redirect chain contains a loop.");
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
-            HttpResponseMessage response = await _httpClient.SendAsync(
+            HttpResponseMessage response = await httpClient.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken)
@@ -206,7 +365,7 @@ public sealed class VerifiedArtifactDownloader
             {
                 response.Dispose();
                 throw new LauncherUpdateException(
-                    "The artifact HTTP transport followed an automatic redirect; "
+                    $"The {subject} HTTP transport followed an automatic redirect; "
                     + "every redirect must be validated before it is requested.");
             }
 
@@ -220,7 +379,7 @@ public sealed class VerifiedArtifactDownloader
                 if (redirectCount >= ReleaseManifestClient.MaximumRedirects)
                 {
                     throw new LauncherUpdateException(
-                        $"The release artifact exceeded "
+                        $"The {subject} exceeded "
                         + $"{ReleaseManifestClient.MaximumRedirects} redirects.");
                 }
 
@@ -228,7 +387,7 @@ public sealed class VerifiedArtifactDownloader
                 if (location is null)
                 {
                     throw new LauncherUpdateException(
-                        "The release artifact redirect has no Location header.");
+                        $"The {subject} redirect has no Location header.");
                 }
 
                 Uri next = location.IsAbsoluteUri
@@ -236,8 +395,9 @@ public sealed class VerifiedArtifactDownloader
                     : new Uri(current, location);
                 ReleaseManifestClient.RequireTransport(
                     next,
-                    "artifact redirect",
+                    $"{subject} redirect",
                     allowLoopbackHttp);
+                onRedirect?.Invoke(next);
                 current = next;
                 redirectCount++;
             }
