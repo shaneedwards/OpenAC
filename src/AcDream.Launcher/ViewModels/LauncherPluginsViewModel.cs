@@ -131,7 +131,10 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(dispatcher);
         _canInteract = canInteract ?? (() => true);
 
-        InstallDialog = new PluginInstallDialogViewModel(() => _canInteract());
+        // Not gated on the window's CanInteract: that is false whenever a modal is open, and this
+        // dialog is one, so it would disable its own Install button. Its Confirm is gated on its own
+        // IsOpen and IsBusy, like the remove dialog's.
+        InstallDialog = new PluginInstallDialogViewModel();
         CheckNowCommand = new AsyncRelayCommand(
             CheckNowAsync,
             () => _canInteract() && !IsBusy && _composition is not null);

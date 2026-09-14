@@ -222,6 +222,32 @@ public sealed partial class LauncherWindowViewModelTests
     }
 
     [Fact]
+    public async Task InstallIsEnabledInsideTheOpenInstallDialogOnceTheWarningIsAcknowledged()
+    {
+        using var fixture = new PluginPanelFixture();
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : throw new InvalidOperationException(
+                "Opening the dialog must not trigger a network call: " + request.RequestUri));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        Assert.Single(viewModel.Plugins.Discover).InstallCommand.Execute(null);
+        PluginInstallDialogViewModel dialog = viewModel.Plugins.InstallDialog;
+        Assert.True(dialog.IsOpen);
+        Assert.True(viewModel.IsModalOpen);
+
+        dialog.IsWarningAcknowledged = true;
+
+        Assert.True(dialog.ConfirmCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task EscapeClosesTheRemoveDialogWithoutRemoving()
     {
         using var fixture = new PluginPanelFixture();
