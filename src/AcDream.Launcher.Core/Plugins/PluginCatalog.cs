@@ -29,6 +29,11 @@ public sealed record PluginCatalog(
 {
     public const int CurrentSchemaVersion = 1;
 
+    /// <summary>The proof-of-concept list release (L-308). One constant, so moving it to Erik's
+    /// account later is a one-line change.</summary>
+    public static Uri ProductionListUri { get; } =
+        GitHubReleaseLocator.LatestAsset("shaneedwards/openac-plugins", "plugins.json");
+
     private static readonly Regex RepoPattern = new(
         @"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$",
         RegexOptions.Compiled);
