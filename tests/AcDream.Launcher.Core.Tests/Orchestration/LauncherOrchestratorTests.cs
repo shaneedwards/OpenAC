@@ -1,5 +1,6 @@
 using AcDream.Launcher.Core.Launching;
 using AcDream.Launcher.Core.Orchestration;
+using AcDream.Launcher.Core.Plugins;
 using AcDream.Launcher.Core.Profiles;
 using AcDream.Launcher.Core.Status;
 using AcDream.Launcher.Core.Updates;
@@ -753,7 +754,8 @@ public sealed class LauncherOrchestratorTests : IDisposable
             LauncherInstallRecord install,
             ApplicationPathSet paths,
             string sessionId,
-            int? loginCommandDelayMs = null)
+            int? loginCommandDelayMs = null,
+            PluginCatalog? catalog = null)
         {
             PlayCallCount++;
             LastCharacter = character;
@@ -765,7 +767,8 @@ public sealed class LauncherOrchestratorTests : IDisposable
                 install,
                 paths,
                 sessionId,
-                loginCommandDelayMs);
+                loginCommandDelayMs,
+                catalog);
             return LastComposed;
         }
 
