@@ -36,9 +36,39 @@ Removing a server removes its saved characters. Keep server names unchanged
 to retain their character settings. If profiles change while an editor is open,
 reopen the editor before saving.
 
-Use a named character row's **…** action for plugins and one-command-per-line
-logon commands. **Logon commands** in the bottom bar provides the complete
+Use a named character row's **…** action to choose which installed plugins
+load for it (see **Plugins** below) and to edit one-command-per-line logon
+commands. **Logon commands** in the bottom bar provides the complete
 structured command list for bulk editing.
+
+## Plugins
+
+The **Plugins** tab lists what is installed and what is available to install
+from the curated list. **Discover** shows plugins not yet installed;
+**Install** downloads and unzips one, but never runs it. **Installed** shows
+what is on disk, with **Update** and **Remove** for plugins the launcher
+itself installed. **Check now** refreshes both lists; the launcher also
+checks once at startup, without delaying the window. **Add from URL** adds
+a plugin from a `https://github.com/owner/name` repository not on the list.
+
+A plugin from the curated list shows a short warning before install. A
+plugin added by URL warns that OpenAC has not reviewed it. Either warning is
+shown once per repository per launcher session.
+
+Installing never enables a plugin. Choose **None** to install without
+enabling anything, **All characters**, or **Choose** to pick specific
+characters. A character's own **…** action opens a checklist of installed
+plugins compatible with its launch mode; only checked plugins load, and a
+blank list loads nothing, bundled plugins included. Existing profiles are
+not migrated: anyone who relied on a plugin loading by default, MossTank
+included, must tick it once.
+
+A blocked plugin (listed as unsafe by the curated list) shows a red badge,
+cannot be installed or updated to, and is filtered out of every character's
+list at launch, with a status line saying so.
+
+`--plugin-list-uri <https-uri>` overrides the curated list for testing, the
+same way `--update-manifest-uri` overrides the update feed.
 
 ## Installation and updates
 

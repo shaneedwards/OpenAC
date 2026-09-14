@@ -473,13 +473,16 @@ public sealed partial class LauncherWindowViewModelTests
         SelectCharacter(viewModel);
 
         viewModel.CharacterLaunchMode = LaunchMode.Headless;
-        viewModel.CharacterPluginsText = "Plugin.One\nPlugin.Two\nPlugin.One";
+        CharacterPluginChoiceViewModel existingPlugin = Assert.Single(viewModel.CharacterPluginChoices);
+        Assert.Equal("Existing.Plugin", existingPlugin.Id);
+        Assert.True(existingPlugin.IsMissing);
+        Assert.True(existingPlugin.IsChecked);
         viewModel.CharacterLoginCommandsText = " /tell someone, hi \n/vt start\n/tell someone, hi";
         viewModel.SaveCharacterSettingsCommand.Execute(null);
 
         Assert.NotNull(orchestrator.SettingsUpdate);
         Assert.Equal(LaunchMode.Headless, orchestrator.SettingsUpdate.Value.Mode);
-        Assert.Equal(["Plugin.One", "Plugin.Two"], orchestrator.SettingsUpdate.Value.Plugins);
+        Assert.Equal(["Existing.Plugin"], orchestrator.SettingsUpdate.Value.Plugins);
         Assert.Equal(
             ["/tell someone, hi", "/vt start", "/tell someone, hi"],
             orchestrator.SettingsUpdate.Value.Commands);
@@ -907,12 +910,14 @@ public sealed partial class LauncherWindowViewModelTests
 
     private static LauncherWindowViewModel CreateInitialized(
         FakeLauncherOrchestrator orchestrator,
-        ILauncherInstaller? installer = null)
+        ILauncherInstaller? installer = null,
+        AcDream.Launcher.Core.Plugins.PluginInventory? pluginInventory = null)
     {
         var viewModel = new LauncherWindowViewModel(
             orchestrator,
             new ImmediateUiDispatcher(),
-            installer);
+            installer,
+            pluginInventory: pluginInventory);
         viewModel.Initialize();
         return viewModel;
     }
