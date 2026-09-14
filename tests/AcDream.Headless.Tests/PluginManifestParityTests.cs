@@ -99,16 +99,63 @@ public sealed class PluginManifestParityTests
         Assert.Throws<LauncherPluginManifestException>(() => LauncherPluginManifest.Parse(json));
     }
 
-    /// <summary>Divergence from Core, recorded rather than fixed there (PR 1 is already proven at
-    /// runtime): Core's <see cref="PluginManifest.Parse"/> lets a duplicate property's last value win
-    /// silently; the launcher's own reader refuses one outright.</summary>
+    /// <summary>Both readers reject a repeated property name anywhere in the document, with the
+    /// same message (L-311).</summary>
     [Theory]
-    [InlineData("""{"id":"edwards.hello","id":"edwards.other","displayName":"Hello","version":"0.1.0","entryDll":"Hello.dll","apiVersion":1}""")]
-    [InlineData("""{"Id":"edwards.hello","id":"edwards.other","displayName":"Hello","version":"0.1.0","entryDll":"Hello.dll","apiVersion":1}""")]
-    public void CoreAcceptsADuplicatePropertyButTheLauncherReaderRejectsIt(string json)
+    [MemberData(nameof(DuplicatePropertyCorpus))]
+    public void BothReadersRejectADuplicatePropertyWithTheSameMessage(string json, string expectedMessage)
     {
-        PluginManifest.Parse(json);
-        Assert.Throws<LauncherPluginManifestException>(() => LauncherPluginManifest.Parse(json));
+        PluginManifestException coreError = Assert.Throws<PluginManifestException>(
+            () => PluginManifest.Parse(json));
+        LauncherPluginManifestException launcherError = Assert.Throws<LauncherPluginManifestException>(
+            () => LauncherPluginManifest.Parse(json));
+
+        Assert.Equal(expectedMessage, coreError.Message);
+        Assert.Equal(expectedMessage, launcherError.Message);
+    }
+
+    [Fact]
+    public void BothReadersAllowTheSamePropertyNameInSiblingObjects()
+    {
+        const string json = """
+            {
+              "id": "edwards.hello",
+              "displayName": "Hello",
+              "version": "0.1.0",
+              "entryDll": "Hello.dll",
+              "apiVersion": 1,
+              "a": { "name": "a" },
+              "b": { "name": "b" }
+            }
+            """;
+
+        PluginManifest core = PluginManifest.Parse(json);
+        LauncherPluginManifest launcher = LauncherPluginManifest.Parse(json);
+
+        Assert.Equal(core.Id, launcher.Id);
+    }
+
+    public static TheoryData<string, string> DuplicatePropertyCorpus()
+    {
+        return new TheoryData<string, string>
+        {
+            {
+                """{"id":"edwards.hello","id":"edwards.other","displayName":"Hello","version":"0.1.0","entryDll":"Hello.dll","apiVersion":1}""",
+                "duplicate property: id"
+            },
+            {
+                """{"Id":"edwards.hello","id":"edwards.other","displayName":"Hello","version":"0.1.0","entryDll":"Hello.dll","apiVersion":1}""",
+                "duplicate property: id"
+            },
+            {
+                """{"id":"edwards.hello","displayName":"Hello","version":"0.1.0","entryDll":"Hello.dll","apiVersion":1,"extra":{"name":"a","name":"b"}}""",
+                "duplicate property: name"
+            },
+            {
+                """{"id":"edwards.hello","displayName":"Hello","version":"0.1.0","entryDll":"Hello.dll","apiVersion":1,"extra":[{"name":"a","name":"b"}]}""",
+                "duplicate property: name"
+            },
+        };
     }
 
     public static TheoryData<string> InvalidManifestCorpus()

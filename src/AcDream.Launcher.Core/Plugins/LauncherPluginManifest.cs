@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AcDream.Launcher.Core.Updates;
@@ -101,11 +102,10 @@ public sealed record LauncherPluginManifest(
 
     public static LauncherPluginManifest Parse(string json)
     {
-        RejectDuplicateTopLevelProperties(json);
-
         ManifestDto? dto;
         try
         {
+            RejectDuplicateProperties(json);
             dto = JsonSerializer.Deserialize<ManifestDto>(json, JsonOptions);
         }
         catch (JsonException ex)
@@ -265,34 +265,29 @@ public sealed record LauncherPluginManifest(
             throw new LauncherPluginManifestException($"missing required field: {jsonFieldName}");
     }
 
-    /// <summary>Unlike Core's reader, where a duplicate property's last value silently wins, the
-    /// launcher's own reader refuses one outright: an install decision should never hinge on which
-    /// of two conflicting property spellings a JSON writer happened to put last.</summary>
-    private static void RejectDuplicateTopLevelProperties(string json)
+    /// <summary>Rejects a manifest that repeats a property name anywhere in the document, matching
+    /// <c>AcDream.Core.Plugins.PluginManifest</c>'s own reader (L-311): an install decision should
+    /// never hinge on which of two conflicting property spellings a JSON writer happened to put
+    /// last.</summary>
+    private static void RejectDuplicateProperties(string json)
     {
-        JsonDocument document;
-        try
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json));
+        var scopes = new Stack<HashSet<string>>();
+        while (reader.Read())
         {
-            document = JsonDocument.Parse(json);
-        }
-        catch (JsonException)
-        {
-            return;
-        }
-
-        using (document)
-        {
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-                return;
-
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (JsonProperty property in document.RootElement.EnumerateObject())
+            switch (reader.TokenType)
             {
-                if (!names.Add(property.Name))
-                {
-                    throw new LauncherPluginManifestException(
-                        $"duplicate property: {property.Name}");
-                }
+                case JsonTokenType.StartObject:
+                    scopes.Push(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                    break;
+                case JsonTokenType.EndObject:
+                    scopes.Pop();
+                    break;
+                case JsonTokenType.PropertyName:
+                    string name = reader.GetString()!;
+                    if (!scopes.Peek().Add(name))
+                        throw new LauncherPluginManifestException($"duplicate property: {name}");
+                    break;
             }
         }
     }

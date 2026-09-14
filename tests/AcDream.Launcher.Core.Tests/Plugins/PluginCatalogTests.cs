@@ -77,6 +77,35 @@ public sealed class PluginCatalogTests
     }
 
     [Fact]
+    public void RejectsACaseVariantDuplicateProperty()
+    {
+        Assert.Throws<LauncherUpdateException>(() => PluginCatalog.Parse("""
+            {
+              "schemaVersion": 1,
+              "SchemaVersion": 1,
+              "plugins": [
+                { "id": "edwards.hello", "name": "Hello", "author": "Shane Edwards",
+                  "description": "Says hello.", "repo": "shaneedwards/openac-plugin-hello" }
+              ]
+            }
+            """));
+    }
+
+    [Fact]
+    public void RejectsADuplicatePropertyInsideAnArrayEntry()
+    {
+        Assert.Throws<LauncherUpdateException>(() => PluginCatalog.Parse("""
+            {
+              "schemaVersion": 1,
+              "plugins": [
+                { "id": "edwards.hello", "Id": "edwards.other", "name": "Hello", "author": "Shane Edwards",
+                  "description": "Says hello.", "repo": "shaneedwards/openac-plugin-hello" }
+              ]
+            }
+            """));
+    }
+
+    [Fact]
     public void RejectsAnUnsupportedSchemaVersion()
     {
         Assert.Throws<LauncherUpdateException>(() => PluginCatalog.Parse("""

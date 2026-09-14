@@ -1,5 +1,4 @@
 using System.Text;
-using AcDream.Launcher.Core.Profiles;
 using AcDream.Launcher.Core.Updates;
 using AcDream.Platform;
 
@@ -11,7 +10,8 @@ public sealed record PluginInstallResult(string Id, string Version, bool WasUpda
 /// Install/update, Remove and Recovery pipelines (L-300, L-306, L-307, L-308, L-309, L-310). Every
 /// write under <see cref="ApplicationPathSet.PluginsDirectory"/> happens under
 /// <see cref="UpdateSessionBarrier.TryAcquireExclusive"/>. Install never writes a character's plugin
-/// list; <see cref="EnableForCharacters"/> is a separate, explicit call.</summary>
+/// list; that write goes through <see cref="AcDream.Launcher.Core.Orchestration.ILauncherOrchestrator.UpdateCharacterSettings"/>
+/// instead (L-300).</summary>
 public sealed class PluginInstaller
 {
     /// <summary>The refusal shown when a running session (or another update) holds the barrier.</summary>
@@ -236,39 +236,6 @@ public sealed class PluginInstaller
             VerifiedArtifactDownloader.TryDelete(zipPath);
             SafeZipExtractor.TryDeleteDirectory(stagingDirectory);
         }
-    }
-
-    /// <summary>Adds <paramref name="pluginId"/> to each character's plugin list and saves the
-    /// profile. The only place install/update/enable writes a character's plugin list
-    /// (L-300).</summary>
-    public void EnableForCharacters(
-        LauncherProfileStore profileStore,
-        string pluginId,
-        IReadOnlyList<CharacterProfile> characters)
-    {
-        ArgumentNullException.ThrowIfNull(profileStore);
-        ArgumentException.ThrowIfNullOrWhiteSpace(pluginId);
-        ArgumentNullException.ThrowIfNull(characters);
-        if (characters.Count == 0)
-        {
-            return;
-        }
-
-        profileStore.ExecuteTransaction(() =>
-        {
-            foreach (CharacterProfile character in characters)
-            {
-                List<string> plugins = character.Plugins
-                    .Where(id => !string.Equals(id, "none", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                if (!plugins.Contains(pluginId, StringComparer.OrdinalIgnoreCase))
-                {
-                    plugins.Add(pluginId);
-                }
-
-                character.Plugins = plugins;
-            }
-        });
     }
 
     /// <summary>Removes a launcher-managed plugin. <paramref name="deleteStorage"/> also deletes the
