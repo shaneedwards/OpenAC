@@ -1,0 +1,507 @@
+using System.Collections.ObjectModel;
+using System.Text;
+using AcDream.Launcher.Core.Orchestration;
+using AcDream.Launcher.Core.Plugins;
+using AcDream.Launcher.Core.Profiles;
+using AcDream.Launcher.Core.Updates;
+
+namespace AcDream.Launcher.ViewModels;
+
+/// <summary>One listed plugin not yet installed, shown on the Discover list.</summary>
+public sealed class PluginDiscoverRowViewModel(
+    string id,
+    string name,
+    string author,
+    string description,
+    string repo,
+    RelayCommand installCommand)
+    : ObservableObject
+{
+    public string Id { get; } = id;
+    public string Name { get; } = name;
+    public string Author { get; } = author;
+    public string Description { get; } = description;
+    public string Repo { get; } = repo;
+    public string AuthorAndRepo { get; } = $"by {author} · {repo}";
+    public string InstallAutomationName { get; } = $"Install {name}";
+    public RelayCommand InstallCommand { get; } = installCommand;
+}
+
+/// <summary>One installed plugin, shown on the Installed list.</summary>
+public sealed class PluginInstalledRowViewModel(
+    string id,
+    string displayName,
+    string version,
+    string sourceBadge,
+    string? compatibility,
+    string? blocked,
+    bool conflict,
+    bool canRemove,
+    bool updateAvailable,
+    RelayCommand? updateCommand,
+    RelayCommand? removeCommand)
+    : ObservableObject
+{
+    public string Id { get; } = id;
+    public string DisplayName { get; } = displayName;
+    public string Version { get; } = version;
+    public string SourceBadge { get; } = sourceBadge;
+    public string Summary { get; } = $"{id} · v{version} · {sourceBadge}";
+    public string? Compatibility { get; } = compatibility;
+    public bool HasCompatibilityNote => !string.IsNullOrWhiteSpace(Compatibility);
+    public string? Blocked { get; } = blocked;
+    public bool IsBlocked => !string.IsNullOrWhiteSpace(Blocked);
+    public bool Conflict { get; } = conflict;
+    public bool CanRemove { get; } = canRemove;
+    public bool UpdateAvailable { get; } = updateAvailable;
+    public string UpdateAutomationName { get; } = $"Update {displayName}";
+    public string RemoveAutomationName { get; } = $"Remove {displayName}";
+    public RelayCommand? UpdateCommand { get; } = updateCommand;
+    public RelayCommand? RemoveCommand { get; } = removeCommand;
+}
+
+/// <summary>Discover/Installed, Check now, Add from URL, and the install and remove dialogs
+/// (plan, "MainWindow.axaml and view models"). Repo URLs are text only; nothing here opens a
+/// browser, loads an assembly, or starts a process (L-300).</summary>
+public sealed class LauncherPluginsViewModel : ObservableObject
+{
+    private readonly ILauncherOrchestrator _orchestrator;
+    private readonly Func<bool> _canInteract;
+    private readonly HashSet<string> _acknowledgedRepos = new(StringComparer.OrdinalIgnoreCase);
+
+    private LauncherPluginComposition? _composition;
+    private Func<ClientVersionResolution?> _clientVersionResolver = () => null;
+    private CancellationTokenSource? _cancellation;
+    private DateTimeOffset? _listAgeUtc;
+
+    private bool _isBusy;
+    private string? _error;
+    private bool _isRateLimited;
+    private string _addFromUrlText = string.Empty;
+    private bool _isRemoveDialogOpen;
+    private string _removePluginId = string.Empty;
+    private string _removeDisplayName = string.Empty;
+    private bool _removeDeleteStorage;
+
+    public LauncherPluginsViewModel(
+        ILauncherOrchestrator orchestrator,
+        IUiDispatcher dispatcher,
+        Func<bool>? canInteract = null)
+    {
+        _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
+        ArgumentNullException.ThrowIfNull(dispatcher);
+        _canInteract = canInteract ?? (() => true);
+
+        InstallDialog = new PluginInstallDialogViewModel(() => _canInteract());
+        CheckNowCommand = new AsyncRelayCommand(
+            CheckNowAsync,
+            () => _canInteract() && !IsBusy && _composition is not null);
+        AddFromUrlCommand = new AsyncRelayCommand(
+            AddFromUrlAsync,
+            () => _canInteract() && !IsBusy && _composition is not null
+                && !string.IsNullOrWhiteSpace(AddFromUrlText));
+        ConfirmRemoveCommand = new RelayCommand(
+            ConfirmRemove,
+            () => IsRemoveDialogOpen && !IsBusy);
+        CancelRemoveCommand = new RelayCommand(
+            () => IsRemoveDialogOpen = false,
+            () => !IsBusy);
+    }
+
+    public ObservableCollection<PluginDiscoverRowViewModel> Discover { get; } = [];
+
+    public ObservableCollection<PluginInstalledRowViewModel> Installed { get; } = [];
+
+    public bool HasDiscover => Discover.Count > 0;
+
+    public bool HasInstalled => Installed.Count > 0;
+
+    public PluginInstallDialogViewModel InstallDialog { get; }
+
+    public AsyncRelayCommand CheckNowCommand { get; }
+
+    public AsyncRelayCommand AddFromUrlCommand { get; }
+
+    public RelayCommand ConfirmRemoveCommand { get; }
+
+    public RelayCommand CancelRemoveCommand { get; }
+
+    public string AddFromUrlText
+    {
+        get => _addFromUrlText;
+        set
+        {
+            if (SetProperty(ref _addFromUrlText, value))
+            {
+                AddFromUrlCommand.NotifyCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool IsBusy
+    {
+        get => _isBusy;
+        private set
+        {
+            if (SetProperty(ref _isBusy, value))
+            {
+                NotifyCommandStates();
+            }
+        }
+    }
+
+    public string? Error
+    {
+        get => _error;
+        private set
+        {
+            if (SetProperty(ref _error, value))
+            {
+                OnPropertyChanged(nameof(HasError));
+            }
+        }
+    }
+
+    public bool HasError => !string.IsNullOrWhiteSpace(Error);
+
+    public bool IsRateLimited
+    {
+        get => _isRateLimited;
+        private set => SetProperty(ref _isRateLimited, value);
+    }
+
+    public bool IsUsingCachedList => _listAgeUtc is not null;
+
+    public string ListAgeText => _listAgeUtc is { } age
+        ? $"Showing the plugin list from {FormatAge(DateTimeOffset.UtcNow - age)} ago."
+        : string.Empty;
+
+    public bool IsRemoveDialogOpen
+    {
+        get => _isRemoveDialogOpen;
+        private set
+        {
+            if (SetProperty(ref _isRemoveDialogOpen, value))
+            {
+                NotifyCommandStates();
+            }
+        }
+    }
+
+    public string RemoveDisplayName
+    {
+        get => _removeDisplayName;
+        private set => SetProperty(ref _removeDisplayName, value);
+    }
+
+    public bool RemoveDeleteStorage
+    {
+        get => _removeDeleteStorage;
+        set => SetProperty(ref _removeDeleteStorage, value);
+    }
+
+    /// <summary>Wires the real backend (App.axaml.cs); left unset, the panel shows no rows and its
+    /// commands stay disabled, matching the other child view models' unavailable defaults.</summary>
+    internal void Configure(
+        LauncherPluginComposition composition,
+        Func<ClientVersionResolution?> clientVersionResolver)
+    {
+        _composition = composition ?? throw new ArgumentNullException(nameof(composition));
+        _clientVersionResolver = clientVersionResolver
+            ?? throw new ArgumentNullException(nameof(clientVersionResolver));
+        NotifyCommandStates();
+    }
+
+    private async Task CheckNowAsync()
+    {
+        if (_composition is null || IsBusy)
+        {
+            return;
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        _cancellation = cancellation;
+        IsBusy = true;
+        Error = null;
+        IsRateLimited = false;
+        try
+        {
+            PluginCheckOutcome outcome = await _composition
+                .CheckAsync(_clientVersionResolver(), cancellation.Token)
+                .ConfigureAwait(true);
+            ApplyOutcome(outcome);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Error = string.IsNullOrWhiteSpace(ex.Message)
+                ? "The plugin list could not be checked."
+                : ex.Message;
+        }
+        finally
+        {
+            if (ReferenceEquals(_cancellation, cancellation))
+            {
+                _cancellation = null;
+            }
+
+            IsBusy = false;
+        }
+    }
+
+    private void ApplyOutcome(PluginCheckOutcome outcome)
+    {
+        // The catalog the next launched session filters blocked ids against (L-302), regardless
+        // of whether this pass fetched fresh or fell back to the cache.
+        _orchestrator.SetPluginCatalog(outcome.Catalog);
+
+        IsRateLimited = outcome.RateLimited;
+        _listAgeUtc = outcome.ListAgeUtc;
+        OnPropertyChanged(nameof(IsUsingCachedList));
+        OnPropertyChanged(nameof(ListAgeText));
+        if (IsRateLimited)
+        {
+            Error = "GitHub is rate limiting; try later.";
+        }
+
+        var updateIds = new HashSet<string>(outcome.UpdateAvailableIds, StringComparer.OrdinalIgnoreCase);
+        Installed.Clear();
+        foreach (InstalledPluginInfo info in outcome.Installed)
+        {
+            bool canRemove = info.Source == InstalledPluginSource.Managed;
+            bool updateAvailable = canRemove && updateIds.Contains(info.Id);
+            RelayCommand? updateCommand = updateAvailable
+                ? new RelayCommand(() => OpenUpdateDialog(info), () => _canInteract() && !IsBusy)
+                : null;
+            RelayCommand? removeCommand = canRemove
+                ? new RelayCommand(() => OpenRemoveDialog(info), () => _canInteract() && !IsBusy)
+                : null;
+            Installed.Add(new PluginInstalledRowViewModel(
+                info.Id,
+                info.DisplayName,
+                info.Version,
+                DescribeSource(info.Source),
+                info.Compatibility,
+                info.Blocked,
+                info.Conflict,
+                canRemove,
+                updateAvailable,
+                updateCommand,
+                removeCommand));
+        }
+
+        Discover.Clear();
+        foreach (PluginDiscoverEntry entry in outcome.Discover)
+        {
+            var install = new RelayCommand(
+                () => OpenInstallDialog(entry.Repo, entry.Id, entry.Name),
+                () => _canInteract() && !IsBusy);
+            Discover.Add(new PluginDiscoverRowViewModel(
+                entry.Id, entry.Name, entry.Author, entry.Description, entry.Repo, install));
+        }
+
+        OnPropertyChanged(nameof(HasInstalled));
+        OnPropertyChanged(nameof(HasDiscover));
+    }
+
+    private void OpenInstallDialog(string repo, string pluginId, string displayName)
+    {
+        if (_composition is null)
+        {
+            return;
+        }
+
+        bool isListed = _composition.CurrentCatalog?.Plugins.Any(entry =>
+            string.Equals(entry.Repo, repo, StringComparison.Ordinal)) == true;
+        InstallDialog.Open(
+            repo,
+            pluginId,
+            displayName,
+            isListed,
+            _acknowledgedRepos.Contains(repo),
+            BuildCharacterOptions(),
+            cancellationToken => InstallAsync(repo, cancellationToken),
+            EnableForCharacters);
+    }
+
+    private void OpenUpdateDialog(InstalledPluginInfo info)
+    {
+        if (info.Repo is { } repo)
+        {
+            OpenInstallDialog(repo, info.Id, info.DisplayName);
+        }
+    }
+
+    private async Task<PluginInstallResult> InstallAsync(string repo, CancellationToken cancellationToken)
+    {
+        PluginInstallResult result = await _composition!.Installer.InstallOrUpdateAsync(
+                repo,
+                _composition.CurrentCatalog,
+                _clientVersionResolver(),
+                warningAcceptedAt: DateTimeOffset.UtcNow,
+                cancellationToken)
+            .ConfigureAwait(true);
+        _acknowledgedRepos.Add(repo);
+        _ = CheckNowAsync();
+        return result;
+    }
+
+    /// <summary>The install dialog's only profile write, and only for the characters chosen there
+    /// (L-300). Reuses the same <see cref="ILauncherOrchestrator.UpdateCharacterSettings"/> path the
+    /// character options dialog saves through, so every write to a character's plugin list goes
+    /// through the orchestrator's own lock.</summary>
+    private void EnableForCharacters(string pluginId, IReadOnlyList<PluginCharacterOption> characters)
+    {
+        List<LauncherCharacterSnapshot> snapshots = [.. _orchestrator.GetSnapshot().Servers
+            .SelectMany(server => server.Accounts)
+            .SelectMany(account => account.Characters)];
+        foreach (PluginCharacterOption character in characters)
+        {
+            LauncherCharacterSnapshot? snapshot = snapshots.FirstOrDefault(candidate =>
+                string.Equals(candidate.ServerName, character.ServerName, StringComparison.Ordinal)
+                && string.Equals(candidate.AccountName, character.AccountName, StringComparison.Ordinal)
+                && string.Equals(candidate.Name, character.CharacterName, StringComparison.Ordinal));
+            if (snapshot is null)
+            {
+                continue;
+            }
+
+            List<string> plugins = snapshot.Plugins
+                .Where(id => !string.Equals(id, "none", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (!plugins.Contains(pluginId, StringComparer.OrdinalIgnoreCase))
+            {
+                plugins.Add(pluginId);
+            }
+
+            _orchestrator.UpdateCharacterSettings(
+                character.ServerName,
+                character.AccountName,
+                character.CharacterName,
+                snapshot.LaunchMode,
+                plugins,
+                snapshot.LoginCommands);
+        }
+    }
+
+    private IReadOnlyList<PluginCharacterOption> BuildCharacterOptions() =>
+        [.. _orchestrator.GetSnapshot().Servers
+            .SelectMany(server => server.Accounts)
+            .SelectMany(account => account.Characters)
+            .Select(character => new PluginCharacterOption(
+                character.ServerName,
+                character.AccountName,
+                character.Name,
+                $"{character.Name} ({character.AccountName}@{character.ServerName})"))];
+
+    private async Task AddFromUrlAsync()
+    {
+        if (_composition is null || IsBusy)
+        {
+            return;
+        }
+
+        if (!GitHubReleaseLocator.TryParseRepoUrl(AddFromUrlText, out string repo))
+        {
+            Error = "Enter a URL like https://github.com/owner/name.";
+            return;
+        }
+
+        IsBusy = true;
+        Error = null;
+        try
+        {
+            PluginReleaseFetchResult fetch = await _composition.ReleaseClient
+                .FetchDocumentAsync(GitHubReleaseLocator.LatestAsset(repo, "plugin.json"))
+                .ConfigureAwait(true);
+            switch (fetch.Status)
+            {
+                case PluginReleaseFetchStatus.Success:
+                    LauncherPluginManifest manifest = LauncherPluginManifest.Parse(
+                        Encoding.UTF8.GetString(fetch.Document!.Content));
+                    AddFromUrlText = string.Empty;
+                    OpenInstallDialog(repo, manifest.Id, manifest.DisplayName);
+                    break;
+                case PluginReleaseFetchStatus.RateLimited:
+                    Error = "GitHub is rate limiting; try later.";
+                    break;
+                default:
+                    Error = "No release was found for that repository.";
+                    break;
+            }
+        }
+        catch (LauncherPluginManifestException)
+        {
+            Error = "That repository's plugin.json could not be read.";
+        }
+        catch (Exception ex)
+        {
+            Error = string.IsNullOrWhiteSpace(ex.Message) ? "Could not add that plugin." : ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void OpenRemoveDialog(InstalledPluginInfo info)
+    {
+        _removePluginId = info.Id;
+        RemoveDisplayName = info.DisplayName;
+        RemoveDeleteStorage = false;
+        IsRemoveDialogOpen = true;
+    }
+
+    private void ConfirmRemove()
+    {
+        if (_composition is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _composition.Installer.Remove(_removePluginId, RemoveDeleteStorage);
+            IsRemoveDialogOpen = false;
+            _ = CheckNowAsync();
+        }
+        catch (Exception ex)
+        {
+            Error = string.IsNullOrWhiteSpace(ex.Message)
+                ? "The plugin could not be removed."
+                : ex.Message;
+        }
+    }
+
+    private void NotifyCommandStates()
+    {
+        CheckNowCommand.NotifyCanExecuteChanged();
+        AddFromUrlCommand.NotifyCanExecuteChanged();
+        ConfirmRemoveCommand.NotifyCanExecuteChanged();
+        CancelRemoveCommand.NotifyCanExecuteChanged();
+        foreach (PluginDiscoverRowViewModel row in Discover)
+        {
+            row.InstallCommand.NotifyCanExecuteChanged();
+        }
+
+        foreach (PluginInstalledRowViewModel row in Installed)
+        {
+            row.UpdateCommand?.NotifyCanExecuteChanged();
+            row.RemoveCommand?.NotifyCanExecuteChanged();
+        }
+    }
+
+    private static string DescribeSource(InstalledPluginSource source) => source switch
+    {
+        InstalledPluginSource.Managed => "Installed",
+        InstalledPluginSource.Manual => "Manual",
+        InstalledPluginSource.Bundled => "Bundled",
+        _ => source.ToString(),
+    };
+
+    private static string FormatAge(TimeSpan age) => age.TotalHours >= 1
+        ? $"{age.TotalHours:0} hour(s)"
+        : $"{Math.Max(1, age.TotalMinutes):0} minute(s)";
+}
