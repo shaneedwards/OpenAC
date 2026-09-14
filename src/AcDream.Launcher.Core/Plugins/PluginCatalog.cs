@@ -19,8 +19,8 @@ public sealed record PluginCatalogEntry(
     string Repo);
 
 /// <summary>The launcher's published plugin list (<c>plugins.json</c>, L-308). Strict parsing
-/// mirrors <see cref="ReleaseManifestClient"/>: unknown members and duplicate properties are
-/// rejected.</summary>
+/// mirrors <see cref="ReleaseManifestClient"/>: unknown members and duplicate properties (compared
+/// case-insensitively, as in <c>plugin.json</c>, L-311) are rejected.</summary>
 public sealed record PluginCatalog(
     int SchemaVersion,
     IReadOnlyList<PluginCatalogEntry> Plugins,
@@ -178,7 +178,7 @@ public sealed record PluginCatalog(
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
-            var names = new HashSet<string>(StringComparer.Ordinal);
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (JsonProperty property in element.EnumerateObject())
             {
                 if (!names.Add(property.Name))
