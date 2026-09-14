@@ -47,6 +47,7 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
     private bool _isOpen;
     private bool _isBusy;
     private bool _isWarningAcknowledged;
+    private bool _showAcknowledgementCheckbox;
     private PluginEnableChoice _choice = PluginEnableChoice.None;
     private string? _error;
 
@@ -70,6 +71,10 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
     /// <summary>Warning acceptance is required once per repo (plan, "Warning"); a repo already
     /// accepted this launcher session opens with the box pre-checked.</summary>
     public bool RequiresAcknowledgement => !_isWarningAcknowledged;
+
+    /// <summary>Whether this repo needed acknowledgement when the dialog opened, fixed for the
+    /// dialog's lifetime so ticking the box doesn't make it disappear.</summary>
+    public bool ShowAcknowledgementCheckbox => _showAcknowledgementCheckbox;
 
     public string WarningText => IsListed
         ? "This plugin will be downloaded and unzipped, never run automatically. "
@@ -202,6 +207,7 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
         }
 
         _isWarningAcknowledged = warningPreviouslyAccepted;
+        _showAcknowledgementCheckbox = !warningPreviouslyAccepted;
         Choice = PluginEnableChoice.None;
         Error = null;
         OnPropertyChanged(nameof(Repo));
@@ -211,6 +217,7 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
         OnPropertyChanged(nameof(WarningText));
         OnPropertyChanged(nameof(HasCharacters));
         OnPropertyChanged(nameof(RequiresAcknowledgement));
+        OnPropertyChanged(nameof(ShowAcknowledgementCheckbox));
         IsOpen = true;
     }
 
@@ -238,7 +245,11 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
         Error = null;
         try
         {
+            // Install succeeded once this returns: close the dialog before touching character
+            // profiles, so a slow or failing enable step can never leave Confirm sitting there to
+            // be pressed again and run the install a second time.
             PluginInstallResult result = await _installAsync(cancellation.Token).ConfigureAwait(true);
+            IsOpen = false;
             if (Choice != PluginEnableChoice.None)
             {
                 PluginCharacterOption[] chosen = Choice == PluginEnableChoice.All
@@ -250,8 +261,6 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
                     _enableForCharacters(result.Id, chosen);
                 }
             }
-
-            IsOpen = false;
         }
         catch (OperationCanceledException)
         {

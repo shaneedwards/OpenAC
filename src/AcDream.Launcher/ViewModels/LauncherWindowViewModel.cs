@@ -530,6 +530,14 @@ public sealed partial class LauncherWindowViewModel : ObservableObject, IDisposa
         {
             UpdatePrompt.Close();
         }
+        else if (Plugins.InstallDialog.IsOpen)
+        {
+            Plugins.InstallDialog.Close();
+        }
+        else if (Plugins.IsRemoveDialogOpen)
+        {
+            Plugins.CloseRemoveDialog();
+        }
     }
 
     private void RefreshFromCore(SelectionKey? preferredSelection = null)

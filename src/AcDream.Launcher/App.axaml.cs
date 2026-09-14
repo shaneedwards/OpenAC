@@ -144,10 +144,12 @@ public sealed partial class App : Application
         _viewModel?.Dispose();
         _orchestrator?.Dispose();
         _updateComposition?.Dispose();
+        _pluginComposition?.Dispose();
         _serverStatusClient.Dispose();
         _viewModel = null;
         _orchestrator = null;
         _updateComposition = null;
+        _pluginComposition = null;
     }
 
     private static LauncherVersion GetLauncherVersion()

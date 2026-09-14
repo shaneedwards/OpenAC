@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using AcDream.Launcher.Core.Plugins;
+using AcDream.Launcher.Core.Profiles;
 using AcDream.Launcher.Core.Updates;
 using AcDream.Platform;
 
@@ -23,7 +24,8 @@ internal sealed record PluginCheckOutcome(
     DateTimeOffset? ListAgeUtc,
     IReadOnlyList<InstalledPluginInfo> Installed,
     IReadOnlyList<PluginDiscoverEntry> Discover,
-    IReadOnlyList<string> UpdateAvailableIds);
+    IReadOnlyList<string> UpdateAvailableIds,
+    IReadOnlyDictionary<string, string> UpdateWithheldReasons);
 
 /// <summary>Composition root for the launcher's plugin install feature (L-300, L-308, L-309),
 /// beside <see cref="LauncherUpdateComposition"/>. Builds the release client, the installer, the
@@ -105,6 +107,28 @@ internal sealed class LauncherPluginComposition : IDisposable
             paths, listUri, httpClient, releaseClient, recordStore, inventory, installer);
     }
 
+    /// <summary>Builds the same pipeline over an injected transport, so the Check pipeline can be
+    /// exercised without a network (in the style of <c>PluginReleaseClient.CreateForTransportTest</c>).</summary>
+    internal static LauncherPluginComposition CreateForTest(
+        ApplicationPathSet paths, Uri listUri, HttpMessageHandler handler)
+    {
+        var httpClient = new HttpClient(handler, disposeHandler: true);
+        var recordStore = InstalledPluginRecordStore.ForApplicationPaths(paths);
+        try
+        {
+            recordStore.Load();
+        }
+        catch (LauncherUpdateException)
+        {
+        }
+
+        var inventory = new PluginInventory(paths, recordStore);
+        var installer = new PluginInstaller(paths, httpClient, recordStore, inventory);
+        var releaseClient = new PluginReleaseClient(httpClient);
+        return new LauncherPluginComposition(
+            paths, listUri, httpClient, releaseClient, recordStore, inventory, installer);
+    }
+
     /// <summary>The launch-time Recovery pipeline (L-309), run once before the inventory is first
     /// read.</summary>
     public void Recover() => Installer.Recover();
@@ -148,17 +172,27 @@ internal sealed class LauncherPluginComposition : IDisposable
 
         IReadOnlyList<InstalledPluginInfo> installed = Inventory.Build(clientResolution, catalog);
         var updateAvailable = new List<string>();
-        foreach (InstalledPluginInfo info in installed)
+        var updateWithheldReasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!rateLimited)
         {
-            InstalledPluginRecord? record = RecordStore.Find(info.Id);
-            if (record is null || record.Pending is not null)
+            foreach (InstalledPluginInfo info in installed)
             {
-                continue;
-            }
+                InstalledPluginRecord? record = RecordStore.Find(info.Id);
+                if (record is null || record.Pending is not null)
+                {
+                    continue;
+                }
 
-            if (await HasUpdateAsync(record, catalog, cancellationToken).ConfigureAwait(false))
-            {
-                updateAvailable.Add(info.Id);
+                PluginUpdateCheck check = await EvaluateUpdateAsync(
+                    record, catalog, clientResolution, cancellationToken).ConfigureAwait(false);
+                if (check.Available)
+                {
+                    updateAvailable.Add(info.Id);
+                }
+                else if (check.WithheldReason is { } reason)
+                {
+                    updateWithheldReasons[info.Id] = reason;
+                }
             }
         }
 
@@ -172,21 +206,24 @@ internal sealed class LauncherPluginComposition : IDisposable
                 .Select(entry => new PluginDiscoverEntry(
                     entry.Id, entry.Name, entry.Author, entry.Description, entry.Repo))];
 
-        return new PluginCheckOutcome(catalog, rateLimited, listAge, installed, discover, updateAvailable);
+        return new PluginCheckOutcome(
+            catalog, rateLimited, listAge, installed, discover, updateAvailable, updateWithheldReasons);
     }
 
-    /// <summary>Newer-and-not-blocked only: an advisory badge, not an enforcement decision. The
-    /// finer min/max/skip compatibility gate lives on <see cref="PluginInstaller"/>, which refuses
-    /// the update itself when the user acts on it.</summary>
-    private async Task<bool> HasUpdateAsync(
+    /// <summary>An advisory badge, not an enforcement decision: the finer min/max/skip compatibility
+    /// gate lives on <see cref="PluginInstaller"/>, which refuses the update itself when the user
+    /// acts on it. When a newer release exists but isn't offered, names why ("not newer" when it
+    /// isn't actually newer is the one case this never reaches).</summary>
+    private async Task<PluginUpdateCheck> EvaluateUpdateAsync(
         InstalledPluginRecord record,
         PluginCatalog? catalog,
+        ClientVersionResolution? clientResolution,
         CancellationToken cancellationToken)
     {
         if (record.Version is not { } currentVersionText
             || !LauncherVersion.TryParse(currentVersionText, out LauncherVersion? currentVersion))
         {
-            return false;
+            return PluginUpdateCheck.None;
         }
 
         PluginReleaseFetchResult fetch;
@@ -200,12 +237,12 @@ internal sealed class LauncherPluginComposition : IDisposable
         }
         catch (LauncherUpdateException)
         {
-            return false;
+            return PluginUpdateCheck.None;
         }
 
         if (fetch.Status != PluginReleaseFetchStatus.Success)
         {
-            return false;
+            return PluginUpdateCheck.None;
         }
 
         LauncherPluginManifest manifest;
@@ -216,12 +253,44 @@ internal sealed class LauncherPluginComposition : IDisposable
         }
         catch (LauncherPluginManifestException)
         {
-            return false;
+            return PluginUpdateCheck.None;
         }
 
-        return LauncherVersion.TryParse(manifest.Version, out LauncherVersion? remoteVersion)
-            && remoteVersion.CompareTo(currentVersion) > 0
-            && catalog?.IsBlocked(record.Id, remoteVersion) != true;
+        if (!LauncherVersion.TryParse(manifest.Version, out LauncherVersion? remoteVersion))
+        {
+            return PluginUpdateCheck.None;
+        }
+
+        if (remoteVersion.CompareTo(currentVersion) <= 0)
+        {
+            return new PluginUpdateCheck(false, "not newer");
+        }
+
+        if (catalog?.IsBlocked(record.Id, remoteVersion) == true)
+        {
+            return new PluginUpdateCheck(false, "blocked");
+        }
+
+        string? versionReason = VersionOnlyCompatibility(manifest, clientResolution?.Version);
+        return versionReason is null
+            ? new PluginUpdateCheck(true, null)
+            : new PluginUpdateCheck(false, versionReason);
+    }
+
+    /// <summary>Host-independent compatibility (min/max/skip host version only): the launch-mode
+    /// gate in <see cref="LauncherPluginCompatibility.Evaluate"/> is a per-character concern, so a
+    /// panel-wide update badge only reports a reason both hosts agree on.</summary>
+    private static string? VersionOnlyCompatibility(
+        LauncherPluginManifest manifest, LauncherVersion? clientVersion)
+    {
+        string? gui = LauncherPluginCompatibility.Evaluate(manifest, LaunchMode.Gui, clientVersion);
+        string? headless = LauncherPluginCompatibility.Evaluate(manifest, LaunchMode.Headless, clientVersion);
+        return string.Equals(gui, headless, StringComparison.Ordinal) ? gui : null;
+    }
+
+    private readonly record struct PluginUpdateCheck(bool Available, string? WithheldReason)
+    {
+        public static readonly PluginUpdateCheck None = new(false, null);
     }
 
     private void WriteCache(byte[] content)

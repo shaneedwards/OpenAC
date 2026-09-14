@@ -141,6 +141,14 @@ public sealed partial class MainWindow : Window
         {
             UpdateCloseButton.Focus();
         }
+        else if (viewModel.Plugins.InstallDialog.IsOpen)
+        {
+            InstallCancelButton.Focus();
+        }
+        else if (viewModel.Plugins.IsRemoveDialogOpen)
+        {
+            RemoveCancelButton.Focus();
+        }
     }
 
     private void OnModalKeyDown(object? sender, KeyEventArgs e)

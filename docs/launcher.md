@@ -52,8 +52,9 @@ checks once at startup, without delaying the window. **Add from URL** adds
 a plugin from a `https://github.com/owner/name` repository not on the list.
 
 A plugin from the curated list shows a short warning before install. A
-plugin added by URL warns that OpenAC has not reviewed it. Either warning is
-shown once per repository per launcher session.
+plugin added by URL warns that OpenAC has not reviewed it. The warning text
+is shown every time; only acknowledging it is remembered, once per
+repository per launcher session.
 
 Installing never enables a plugin. Choose **None** to install without
 enabling anything, **All characters**, or **Choose** to pick specific

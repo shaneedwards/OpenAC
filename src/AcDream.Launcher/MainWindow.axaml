@@ -146,6 +146,7 @@
                         <TextBlock Text="{Binding Compatibility}" IsVisible="{Binding HasCompatibilityNote}" Foreground="#DBB573" FontSize="12" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding Blocked}" IsVisible="{Binding IsBlocked}" Foreground="#FFB0A0" FontSize="12" TextWrapping="Wrap" />
                         <TextBlock Text="A newer client version bundles this plugin; it will replace this copy on update." IsVisible="{Binding Conflict}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding UpdateWithheldReason, StringFormat='Update withheld: {0}'}" IsVisible="{Binding HasUpdateWithheldReason}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       </StackPanel>
                       <Button Grid.Column="1" Content="Update" IsVisible="{Binding UpdateAvailable}" Command="{Binding UpdateCommand}" AutomationProperties.Name="{Binding UpdateAutomationName}" />
                       <Button Grid.Column="2" Content="Remove" IsVisible="{Binding CanRemove}" Command="{Binding RemoveCommand}" AutomationProperties.Name="{Binding RemoveAutomationName}" />
@@ -167,6 +168,8 @@
                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                         <TextBlock Text="{Binding Description}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                         <SelectableTextBlock Text="{Binding AuthorAndRepo}" Classes="muted" FontSize="12" />
+                        <TextBlock Text="{Binding LatestVersion, StringFormat='Latest: v{0}'}" IsVisible="{Binding HasLatestVersion}" Classes="muted" FontSize="12" />
+                        <TextBlock Text="{Binding Compatibility}" IsVisible="{Binding HasCompatibilityNote}" Foreground="#DBB573" FontSize="12" TextWrapping="Wrap" />
                       </StackPanel>
                       <Button Grid.Column="1" Content="Install" Classes="primary" Command="{Binding InstallCommand}" AutomationProperties.Name="{Binding InstallAutomationName}" />
                     </Grid>
@@ -517,7 +520,7 @@
           <ScrollViewer Grid.Row="1"><ItemsControl ItemsSource="{Binding Sessions}"><ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:LauncherSessionRowViewModel"><Border Padding="6,8" BorderBrush="#35434B" BorderThickness="0,0,0,1">
               <Grid ColumnDefinitions="160,160,*" ColumnSpacing="10"><TextBlock Text="{Binding Account}" TextWrapping="Wrap" /><TextBlock Grid.Column="1" Text="{Binding Character}" TextWrapping="Wrap" />
-                <StackPanel Grid.Column="2"><TextBlock Text="{Binding Status}" TextWrapping="Wrap" /><TextBlock Text="{Binding Error}" TextWrapping="Wrap" Foreground="#FFB0A0" /></StackPanel>
+                <StackPanel Grid.Column="2"><TextBlock Text="{Binding Status}" TextWrapping="Wrap" /><TextBlock Text="{Binding Error}" TextWrapping="Wrap" Foreground="#FFB0A0" /><TextBlock Text="{Binding PluginNotice}" TextWrapping="Wrap" IsVisible="{Binding HasPluginNotice}" Classes="muted" /></StackPanel>
               </Grid></Border></DataTemplate>
           </ItemsControl.ItemTemplate></ItemsControl></ScrollViewer>
           <Button Grid.Row="2" x:Name="SessionLogCloseButton" Content="Close" Command="{Binding CloseDesktopDialogCommand}" HorizontalAlignment="Right" />
@@ -533,7 +536,7 @@
           <TextBlock Grid.Row="2" Text="{Binding Plugins.InstallDialog.WarningText}" TextWrapping="Wrap" />
           <CheckBox Grid.Row="3" Content="I have reviewed this plugin and trust its source"
                     IsChecked="{Binding Plugins.InstallDialog.IsWarningAcknowledged, Mode=TwoWay}"
-                    IsVisible="{Binding Plugins.InstallDialog.RequiresAcknowledgement}"
+                    IsVisible="{Binding Plugins.InstallDialog.ShowAcknowledgementCheckbox}"
                     AutomationProperties.Name="Acknowledge plugin source warning" />
           <StackPanel Grid.Row="4" Spacing="6">
             <TextBlock Text="Enable for" FontWeight="SemiBold" />
@@ -559,7 +562,7 @@
           <TextBlock Grid.Row="5" Text="{Binding Plugins.InstallDialog.Error}" Foreground="#FFB0A0"
                      IsVisible="{Binding Plugins.InstallDialog.HasError}" TextWrapping="Wrap" />
           <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-            <Button Content="Cancel" Command="{Binding Plugins.InstallDialog.CancelCommand}" />
+            <Button x:Name="InstallCancelButton" Content="Cancel" IsCancel="True" Command="{Binding Plugins.InstallDialog.CancelCommand}" />
             <Button x:Name="InstallConfirmButton" Content="Install" Classes="primary" IsDefault="True"
                     Command="{Binding Plugins.InstallDialog.ConfirmCommand}"
                     AutomationProperties.Name="Confirm plugin install" />
@@ -578,7 +581,7 @@
                     AutomationProperties.Name="Also delete this plugin's saved settings" />
           <TextBlock Text="{Binding Plugins.Error}" Foreground="#FFB0A0" IsVisible="{Binding Plugins.HasError}" TextWrapping="Wrap" />
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-            <Button Content="Cancel" Command="{Binding Plugins.CancelRemoveCommand}" />
+            <Button x:Name="RemoveCancelButton" Content="Cancel" IsCancel="True" Command="{Binding Plugins.CancelRemoveCommand}" />
             <Button x:Name="RemoveConfirmButton" Content="Remove" Classes="danger" IsDefault="True"
                     Command="{Binding Plugins.ConfirmRemoveCommand}"
                     AutomationProperties.Name="Confirm plugin removal" />
