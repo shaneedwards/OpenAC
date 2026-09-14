@@ -63,6 +63,85 @@ public sealed partial class LauncherWindowViewModelTests
     }
 
     [Fact]
+    public void DuplicateConfiguredPluginIdsProduceOneChecklistEntry()
+    {
+        using var fixture = new PluginChecklistFixture();
+        using var orchestrator = new FakeLauncherOrchestrator
+        {
+            ServersOverride =
+            [
+                new LauncherServerSnapshot("Local ACE", "127.0.0.1", 9000,
+                [
+                    new LauncherAccountSnapshot("Local ACE", "testaccount",
+                    [
+                        new LauncherCharacterSnapshot(
+                            "Local ACE",
+                            "testaccount",
+                            "+Acdream",
+                            "0x5000000A",
+                            LaunchMode.Headless,
+                            ["ghost.missing", "ghost.missing"],
+                            [],
+                            HasRunningSession: false,
+                            SessionStatus: "Ready"),
+                    ],
+                    HasRunningActivity: false,
+                    ActivityStatus: "Ready"),
+                ]),
+            ],
+        };
+        using var viewModel = CreateInitialized(orchestrator, pluginInventory: fixture.Inventory);
+        SelectCharacter(viewModel);
+
+        CharacterPluginChoiceViewModel missing = Assert.Single(viewModel.CharacterPluginChoices);
+        Assert.Equal("ghost.missing", missing.Id);
+
+        viewModel.SaveCharacterSettingsCommand.Execute(null);
+
+        Assert.NotNull(orchestrator.SettingsUpdate);
+        Assert.Equal(["ghost.missing"], orchestrator.SettingsUpdate.Value.Plugins);
+    }
+
+    [Fact]
+    public void AnInstalledButWrongHostConfiguredIdIsLabeledNotMissing()
+    {
+        using var fixture = new PluginChecklistFixture();
+        fixture.WriteManifest("plugin.graphical", hosts: ["graphical"]);
+
+        using var orchestrator = new FakeLauncherOrchestrator
+        {
+            ServersOverride =
+            [
+                new LauncherServerSnapshot("Local ACE", "127.0.0.1", 9000,
+                [
+                    new LauncherAccountSnapshot("Local ACE", "testaccount",
+                    [
+                        new LauncherCharacterSnapshot(
+                            "Local ACE",
+                            "testaccount",
+                            "+Acdream",
+                            "0x5000000A",
+                            LaunchMode.Headless,
+                            ["plugin.graphical"],
+                            [],
+                            HasRunningSession: false,
+                            SessionStatus: "Ready"),
+                    ],
+                    HasRunningActivity: false,
+                    ActivityStatus: "Ready"),
+                ]),
+            ],
+        };
+        using var viewModel = CreateInitialized(orchestrator, pluginInventory: fixture.Inventory);
+        SelectCharacter(viewModel);
+
+        CharacterPluginChoiceViewModel choice = Assert.Single(viewModel.CharacterPluginChoices);
+        Assert.Equal("plugin.graphical", choice.Id);
+        Assert.Equal("plugin.graphical (not available for this mode)", choice.DisplayName);
+        Assert.DoesNotContain("missing", choice.DisplayName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void EachCharactersChecklistIsFilteredByItsOwnLaunchMode()
     {
         using var fixture = new PluginChecklistFixture();

@@ -997,6 +997,8 @@ public sealed partial class LauncherWindowViewModelTests
 
         public (LaunchMode Mode, IReadOnlyList<string> Plugins, IReadOnlyList<string> Commands)? SettingsUpdate { get; private set; }
 
+        public List<(string Server, string Account, string Character, LaunchMode Mode, IReadOnlyList<string> Plugins)> SettingsUpdates { get; } = [];
+
         public (string Server, string Account, string? Character, LaunchMode Mode)? LaunchRequest { get; private set; }
 
         public (string Server, string Account)? ProbeRequest { get; private set; }
@@ -1094,8 +1096,11 @@ public sealed partial class LauncherWindowViewModelTests
             string characterName,
             LaunchMode launchMode,
             IReadOnlyList<string> plugins,
-            IReadOnlyList<string> loginCommands) =>
+            IReadOnlyList<string> loginCommands)
+        {
             SettingsUpdate = (launchMode, plugins, loginCommands);
+            SettingsUpdates.Add((serverName, accountName, characterName, launchMode, plugins));
+        }
 
         public void RemoveCharacter(
             string serverName,

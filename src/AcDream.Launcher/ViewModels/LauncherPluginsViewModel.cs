@@ -17,6 +17,9 @@ public sealed class PluginDiscoverRowViewModel(
     RelayCommand installCommand)
     : ObservableObject
 {
+    private string? _latestVersion;
+    private string? _compatibility;
+
     public string Id { get; } = id;
     public string Name { get; } = name;
     public string Author { get; } = author;
@@ -25,6 +28,37 @@ public sealed class PluginDiscoverRowViewModel(
     public string AuthorAndRepo { get; } = $"by {author} · {repo}";
     public string InstallAutomationName { get; } = $"Install {name}";
     public RelayCommand InstallCommand { get; } = installCommand;
+
+    /// <summary>Filled in once the Plugins tab is opened (plan, "Request budget"): blank until
+    /// then, so opening Discover costs one request per listed, not-installed plugin rather than
+    /// every Check pass paying for plugins nobody is looking at.</summary>
+    public string? LatestVersion
+    {
+        get => _latestVersion;
+        set
+        {
+            if (SetProperty(ref _latestVersion, value))
+            {
+                OnPropertyChanged(nameof(HasLatestVersion));
+            }
+        }
+    }
+
+    public bool HasLatestVersion => !string.IsNullOrWhiteSpace(LatestVersion);
+
+    public string? Compatibility
+    {
+        get => _compatibility;
+        set
+        {
+            if (SetProperty(ref _compatibility, value))
+            {
+                OnPropertyChanged(nameof(HasCompatibilityNote));
+            }
+        }
+    }
+
+    public bool HasCompatibilityNote => !string.IsNullOrWhiteSpace(Compatibility);
 }
 
 /// <summary>One installed plugin, shown on the Installed list.</summary>
@@ -38,6 +72,7 @@ public sealed class PluginInstalledRowViewModel(
     bool conflict,
     bool canRemove,
     bool updateAvailable,
+    string? updateWithheldReason,
     RelayCommand? updateCommand,
     RelayCommand? removeCommand)
     : ObservableObject
@@ -54,6 +89,8 @@ public sealed class PluginInstalledRowViewModel(
     public bool Conflict { get; } = conflict;
     public bool CanRemove { get; } = canRemove;
     public bool UpdateAvailable { get; } = updateAvailable;
+    public string? UpdateWithheldReason { get; } = updateWithheldReason;
+    public bool HasUpdateWithheldReason => !UpdateAvailable && !string.IsNullOrWhiteSpace(UpdateWithheldReason);
     public string UpdateAutomationName { get; } = $"Update {displayName}";
     public string RemoveAutomationName { get; } = $"Remove {displayName}";
     public RelayCommand? UpdateCommand { get; } = updateCommand;
@@ -73,6 +110,8 @@ public sealed class LauncherPluginsViewModel : ObservableObject
     private Func<ClientVersionResolution?> _clientVersionResolver = () => null;
     private CancellationTokenSource? _cancellation;
     private DateTimeOffset? _listAgeUtc;
+    private readonly Dictionary<string, DiscoverDetails> _discoverDetailsCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private bool _isBusy;
     private string? _error;
@@ -265,6 +304,10 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         {
             Error = "GitHub is rate limiting; try later.";
         }
+        else if (outcome.Catalog is null)
+        {
+            Error = "Could not reach the plugin list.";
+        }
 
         var updateIds = new HashSet<string>(outcome.UpdateAvailableIds, StringComparer.OrdinalIgnoreCase);
         Installed.Clear();
@@ -278,6 +321,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             RelayCommand? removeCommand = canRemove
                 ? new RelayCommand(() => OpenRemoveDialog(info), () => _canInteract() && !IsBusy)
                 : null;
+            outcome.UpdateWithheldReasons.TryGetValue(info.Id, out string? withheldReason);
             Installed.Add(new PluginInstalledRowViewModel(
                 info.Id,
                 info.DisplayName,
@@ -288,6 +332,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                 info.Conflict,
                 canRemove,
                 updateAvailable,
+                withheldReason,
                 updateCommand,
                 removeCommand));
         }
@@ -298,13 +343,77 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             var install = new RelayCommand(
                 () => OpenInstallDialog(entry.Repo, entry.Id, entry.Name),
                 () => _canInteract() && !IsBusy);
-            Discover.Add(new PluginDiscoverRowViewModel(
-                entry.Id, entry.Name, entry.Author, entry.Description, entry.Repo, install));
+            var row = new PluginDiscoverRowViewModel(
+                entry.Id, entry.Name, entry.Author, entry.Description, entry.Repo, install);
+            if (_discoverDetailsCache.TryGetValue(entry.Id, out DiscoverDetails cached))
+            {
+                row.LatestVersion = cached.LatestVersion;
+                row.Compatibility = cached.Compatibility;
+            }
+
+            Discover.Add(row);
         }
 
         OnPropertyChanged(nameof(HasInstalled));
         OnPropertyChanged(nameof(HasDiscover));
     }
+
+    /// <summary>Opening Discover's own request (plan, "Request budget"): one <c>plugin.json</c> per
+    /// listed, not-installed plugin still missing its details, cached here for the rest of the
+    /// launcher session so switching tabs or checking again never re-fetches it.</summary>
+    internal async Task RefreshDiscoverDetailsAsync()
+    {
+        if (_composition is null)
+        {
+            return;
+        }
+
+        foreach (PluginDiscoverRowViewModel row in Discover.ToArray())
+        {
+            if (_discoverDetailsCache.ContainsKey(row.Id))
+            {
+                continue;
+            }
+
+            PluginReleaseFetchResult fetch;
+            try
+            {
+                fetch = await _composition.ReleaseClient
+                    .FetchDocumentAsync(GitHubReleaseLocator.LatestAsset(row.Repo, "plugin.json"))
+                    .ConfigureAwait(true);
+            }
+            catch (LauncherUpdateException)
+            {
+                continue;
+            }
+
+            if (fetch.Status != PluginReleaseFetchStatus.Success)
+            {
+                continue;
+            }
+
+            LauncherPluginManifest manifest;
+            try
+            {
+                manifest = LauncherPluginManifest.Parse(Encoding.UTF8.GetString(fetch.Document!.Content));
+            }
+            catch (LauncherPluginManifestException)
+            {
+                continue;
+            }
+
+            LauncherVersion? clientVersion = _clientVersionResolver()?.Version;
+            string? gui = LauncherPluginCompatibility.Evaluate(manifest, LaunchMode.Gui, clientVersion);
+            string? headless = LauncherPluginCompatibility.Evaluate(manifest, LaunchMode.Headless, clientVersion);
+            string? compatibility = string.Equals(gui, headless, StringComparison.Ordinal) ? gui : null;
+            var details = new DiscoverDetails(manifest.Version, compatibility);
+            _discoverDetailsCache[row.Id] = details;
+            row.LatestVersion = details.LatestVersion;
+            row.Compatibility = details.Compatibility;
+        }
+    }
+
+    private readonly record struct DiscoverDetails(string LatestVersion, string? Compatibility);
 
     private void OpenInstallDialog(string repo, string pluginId, string displayName)
     {
@@ -351,38 +460,87 @@ public sealed class LauncherPluginsViewModel : ObservableObject
     /// <summary>The install dialog's only profile write, and only for the characters chosen there
     /// (L-300). Reuses the same <see cref="ILauncherOrchestrator.UpdateCharacterSettings"/> path the
     /// character options dialog saves through, so every write to a character's plugin list goes
-    /// through the orchestrator's own lock.</summary>
-    private void EnableForCharacters(string pluginId, IReadOnlyList<PluginCharacterOption> characters)
+    /// through the orchestrator's own lock. Runs after the dialog has already closed (install
+    /// succeeded), so any trouble here is reported on the panel, not the dialog.</summary>
+    internal void EnableForCharacters(string pluginId, IReadOnlyList<PluginCharacterOption> characters)
     {
+        IReadOnlyList<LauncherPluginHostKind> hosts = ReadInstalledHosts(pluginId);
         List<LauncherCharacterSnapshot> snapshots = [.. _orchestrator.GetSnapshot().Servers
             .SelectMany(server => server.Accounts)
             .SelectMany(account => account.Characters)];
-        foreach (PluginCharacterOption character in characters)
+        var skipped = new List<string>();
+        try
         {
-            LauncherCharacterSnapshot? snapshot = snapshots.FirstOrDefault(candidate =>
-                string.Equals(candidate.ServerName, character.ServerName, StringComparison.Ordinal)
-                && string.Equals(candidate.AccountName, character.AccountName, StringComparison.Ordinal)
-                && string.Equals(candidate.Name, character.CharacterName, StringComparison.Ordinal));
-            if (snapshot is null)
+            foreach (PluginCharacterOption character in characters)
             {
-                continue;
-            }
+                LauncherCharacterSnapshot? snapshot = snapshots.FirstOrDefault(candidate =>
+                    string.Equals(candidate.ServerName, character.ServerName, StringComparison.Ordinal)
+                    && string.Equals(candidate.AccountName, character.AccountName, StringComparison.Ordinal)
+                    && string.Equals(candidate.Name, character.CharacterName, StringComparison.Ordinal));
+                if (snapshot is null)
+                {
+                    continue;
+                }
 
-            List<string> plugins = snapshot.Plugins
-                .Where(id => !string.Equals(id, "none", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            if (!plugins.Contains(pluginId, StringComparer.OrdinalIgnoreCase))
-            {
-                plugins.Add(pluginId);
-            }
+                LauncherPluginHostKind characterHost = snapshot.LaunchMode == LaunchMode.Headless
+                    ? LauncherPluginHostKind.Headless
+                    : LauncherPluginHostKind.Graphical;
+                if (!hosts.Contains(characterHost))
+                {
+                    skipped.Add(character.DisplayName);
+                    continue;
+                }
 
-            _orchestrator.UpdateCharacterSettings(
-                character.ServerName,
-                character.AccountName,
-                character.CharacterName,
-                snapshot.LaunchMode,
-                plugins,
-                snapshot.LoginCommands);
+                List<string> plugins = snapshot.Plugins
+                    .Where(id => !string.Equals(id, "none", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (!plugins.Contains(pluginId, StringComparer.OrdinalIgnoreCase))
+                {
+                    plugins.Add(pluginId);
+                }
+
+                _orchestrator.UpdateCharacterSettings(
+                    character.ServerName,
+                    character.AccountName,
+                    character.CharacterName,
+                    snapshot.LaunchMode,
+                    plugins,
+                    snapshot.LoginCommands);
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = string.IsNullOrWhiteSpace(ex.Message)
+                ? "The plugin installed, but could not be enabled for every chosen character."
+                : ex.Message;
+            return;
+        }
+
+        if (skipped.Count > 0)
+        {
+            Error = $"Not enabled for {string.Join(", ", skipped)}: "
+                + "this plugin does not support that launch mode.";
+        }
+    }
+
+    private IReadOnlyList<LauncherPluginHostKind> ReadInstalledHosts(string pluginId)
+    {
+        InstalledPluginInfo? info = _composition?.Inventory.Find(
+            pluginId, _clientVersionResolver(), _composition.CurrentCatalog);
+        if (info is null)
+        {
+            return [LauncherPluginHostKind.Graphical, LauncherPluginHostKind.Headless];
+        }
+
+        try
+        {
+            return LauncherPluginManifest.Parse(
+                File.ReadAllText(Path.Combine(info.Directory, "plugin.json"))).Hosts
+                ?? [LauncherPluginHostKind.Graphical, LauncherPluginHostKind.Headless];
+        }
+        catch (Exception ex) when (ex is IOException or LauncherPluginManifestException)
+        {
+            return [LauncherPluginHostKind.Graphical, LauncherPluginHostKind.Headless];
         }
     }
 
@@ -451,7 +609,20 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         _removePluginId = info.Id;
         RemoveDisplayName = info.DisplayName;
         RemoveDeleteStorage = false;
+        Error = null;
         IsRemoveDialogOpen = true;
+    }
+
+    /// <summary>Escape's path to the remove dialog, matching <see cref="PluginInstallDialogViewModel.Close"/>:
+    /// a no-op while the removal itself is running.</summary>
+    public void CloseRemoveDialog()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        IsRemoveDialogOpen = false;
     }
 
     private void ConfirmRemove()
@@ -501,7 +672,9 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         _ => source.ToString(),
     };
 
-    private static string FormatAge(TimeSpan age) => age.TotalHours >= 1
-        ? $"{age.TotalHours:0} hour(s)"
-        : $"{Math.Max(1, age.TotalMinutes):0} minute(s)";
+    private static string FormatAge(TimeSpan age) => age.TotalDays >= 1
+        ? $"{age.TotalDays:0} day(s)"
+        : age.TotalHours >= 1
+            ? $"{age.TotalHours:0} hour(s)"
+            : $"{Math.Max(1, age.TotalMinutes):0} minute(s)";
 }

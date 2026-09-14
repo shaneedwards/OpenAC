@@ -104,6 +104,37 @@ public sealed class PluginInstallDialogViewModelTests
     }
 
     [Fact]
+    public async Task EnableFailureAfterInstallStillClosesTheDialogAndNeverReinstalls()
+    {
+        var dialog = new PluginInstallDialogViewModel();
+        int installCount = 0;
+        dialog.Open(
+            "shaneedwards/openac-plugin-hello",
+            "edwards.hello",
+            "Hello",
+            isListed: true,
+            warningPreviouslyAccepted: true,
+            Characters,
+            _ =>
+            {
+                installCount++;
+                return Task.FromResult(new PluginInstallResult("edwards.hello", "0.1.0", WasUpdate: false));
+            },
+            (_, _) => throw new InvalidOperationException("could not save the character profile"));
+
+        dialog.EnableAll = true;
+        await dialog.ConfirmCommand.ExecuteAsync();
+
+        Assert.False(dialog.IsOpen);
+        Assert.Equal(1, installCount);
+        Assert.False(dialog.ConfirmCommand.CanExecute(null));
+
+        await dialog.ConfirmCommand.ExecuteAsync();
+
+        Assert.Equal(1, installCount);
+    }
+
+    [Fact]
     public void UnlistedRepoRequiresAcknowledgementBeforeConfirmIsAvailable()
     {
         var dialog = new PluginInstallDialogViewModel();
@@ -122,6 +153,27 @@ public sealed class PluginInstallDialogViewModelTests
 
         dialog.IsWarningAcknowledged = true;
         Assert.True(dialog.ConfirmCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void TickingAcknowledgementDoesNotHideItsOwnCheckbox()
+    {
+        var dialog = new PluginInstallDialogViewModel();
+        dialog.Open(
+            "someone-else/some-plugin",
+            "someone.plugin",
+            "Some Plugin",
+            isListed: false,
+            warningPreviouslyAccepted: false,
+            [],
+            _ => Task.FromResult(new PluginInstallResult("someone.plugin", "0.1.0", WasUpdate: false)),
+            (_, _) => { });
+
+        Assert.True(dialog.ShowAcknowledgementCheckbox);
+
+        dialog.IsWarningAcknowledged = true;
+
+        Assert.True(dialog.ShowAcknowledgementCheckbox);
     }
 
     [Fact]

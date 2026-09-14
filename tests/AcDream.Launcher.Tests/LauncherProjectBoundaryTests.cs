@@ -122,7 +122,7 @@ public sealed class LauncherProjectBoundaryTests
         Assert.Equal(8, Count(markup, "KeyDown=\"OnModalKeyDown\""));
         Assert.True(Count(markup, "AutomationProperties.Name=") >= 13);
         Assert.True(Count(markup, "IsDefault=\"True\"") >= 3);
-        Assert.True(Count(markup, "IsCancel=\"True\"") >= 3);
+        Assert.Equal(5, Count(markup, "IsCancel=\"True\""));
         Assert.Contains("ServerNameTextBox", markup, StringComparison.Ordinal);
         Assert.Contains("AccountNameTextBox", markup, StringComparison.Ordinal);
         Assert.Contains("CharacterNameTextBox", markup, StringComparison.Ordinal);

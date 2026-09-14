@@ -219,6 +219,44 @@ public sealed class LauncherOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task BlockedPluginNoticeSurvivesLaterStatusUpdates()
+    {
+        var statusSources = new QueueStatusSourceFactory();
+        using LauncherOrchestrator orchestrator = CreateOrchestrator(
+            statusSourceFactory: statusSources);
+        orchestrator.SetPluginCatalog(PluginCatalog.Parse("""
+            {
+              "schemaVersion": 1,
+              "plugins": [
+                { "id": "ExamplePlugin", "name": "Example", "author": "Shane Edwards",
+                  "description": "Test fixture.", "repo": "shaneedwards/openac-plugin-hello" }
+              ],
+              "blocked": [
+                { "id": "ExamplePlugin", "versions": ["*"], "reason": "test" }
+              ]
+            }
+            """));
+
+        LauncherSessionSnapshot launched = await orchestrator.LaunchAsync(
+            "Local ACE",
+            "testaccount",
+            "+Acdream",
+            LaunchMode.Headless);
+
+        const string notice = "Plugin 'ExamplePlugin' is blocked and was not loaded.";
+        Assert.Equal(notice, launched.PluginNotice);
+
+        QueueStatusSource source = Assert.Single(statusSources.Created);
+        source.Enqueue(Connected("s1"));
+        source.Enqueue(EnteredWorld("s1", "+Acdream"));
+        orchestrator.PollStatus();
+
+        LauncherSessionSnapshot inWorld = Assert.Single(orchestrator.GetSnapshot().Sessions);
+        Assert.Equal(LauncherActivityState.InWorld, inWorld.State);
+        Assert.Equal(notice, inWorld.PluginNotice);
+    }
+
+    [Fact]
     public async Task AccountGuiSelectDoesNotRequireACachedCharacterOrEmitASelector()
     {
         var config = new RecordingConfigService();
