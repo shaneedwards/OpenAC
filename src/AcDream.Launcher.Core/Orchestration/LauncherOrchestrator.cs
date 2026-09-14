@@ -753,9 +753,10 @@ public sealed class LauncherOrchestrator : ILauncherOrchestrator
                 request.Activity.SupervisorStateHandler = stateHandler;
                 request.Activity.StatusSource = statusSource;
                 request.Activity.StderrLogPath = composed.StderrLogPath;
-                request.Activity.Status = composed.PluginStatusLines.Count > 0
-                    ? string.Join(' ', composed.PluginStatusLines) + " Starting host process…"
-                    : "Starting host process…";
+                request.Activity.PluginNotice = composed.PluginStatusLines.Count > 0
+                    ? string.Join(' ', composed.PluginStatusLines)
+                    : null;
+                request.Activity.Status = "Starting host process…";
             }
 
             RaiseStateChanged();
@@ -1389,6 +1390,11 @@ public sealed class LauncherOrchestrator : ILauncherOrchestrator
         public int? ExitCode { get; set; }
 
         public string? Error { get; set; }
+
+        /// <summary>The plugin status lines from launch (blocked ids), shown
+        /// alongside Error rather than in Status, which later state updates
+        /// overwrite.</summary>
+        public string? PluginNotice { get; set; }
         public string? StderrLogPath { get; set; }
 
         public string? HostTerminalStatus { get; set; }
@@ -1441,7 +1447,8 @@ public sealed class LauncherOrchestrator : ILauncherOrchestrator
                 Error,
                 CreatedAt,
                 ExitReason,
-                ExitedGracefully);
+                ExitedGracefully,
+                PluginNotice);
     }
 
     private sealed class StartRequest(

@@ -74,7 +74,11 @@ public sealed partial class LauncherWindowViewModel
         Plugins.InstallDialog.PropertyChanged += OnModalPropertyChanged;
         Plugins.PropertyChanged += OnModalPropertyChanged;
         SelectAccountsTabCommand = new RelayCommand(() => SelectedTab = LauncherMainTab.Accounts);
-        SelectPluginsTabCommand = new RelayCommand(() => SelectedTab = LauncherMainTab.Plugins);
+        SelectPluginsTabCommand = new RelayCommand(() =>
+        {
+            SelectedTab = LauncherMainTab.Plugins;
+            _ = Plugins.RefreshDiscoverDetailsAsync();
+        });
     }
 
     /// <summary>Wires the real plugin backend, built by <c>LauncherPluginComposition</c> in
@@ -103,6 +107,7 @@ public sealed partial class LauncherWindowViewModel
 
         var configured = new HashSet<string>(character.Plugins, StringComparer.OrdinalIgnoreCase);
         var placed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var wrongHostDisplayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         LauncherPluginHostKind host = character.LaunchMode == LaunchMode.Headless
             ? LauncherPluginHostKind.Headless
             : LauncherPluginHostKind.Graphical;
@@ -117,7 +122,13 @@ public sealed partial class LauncherWindowViewModel
                 LauncherPluginManifest? manifest = TryReadManifest(info.Directory);
                 IReadOnlyList<LauncherPluginHostKind> hosts = manifest?.Hosts
                     ?? [LauncherPluginHostKind.Graphical, LauncherPluginHostKind.Headless];
-                if (!hosts.Contains(host) || !placed.Add(info.Id))
+                if (!hosts.Contains(host))
+                {
+                    wrongHostDisplayNames[info.Id] = info.DisplayName;
+                    continue;
+                }
+
+                if (!placed.Add(info.Id))
                 {
                     continue;
                 }
@@ -137,8 +148,11 @@ public sealed partial class LauncherWindowViewModel
                 continue;
             }
 
+            string displayName = wrongHostDisplayNames.TryGetValue(id, out string? installedName)
+                ? $"{installedName} (not available for this mode)"
+                : $"{id} (missing)";
             CharacterPluginChoices.Add(new CharacterPluginChoiceViewModel(
-                id, $"{id} (missing)", isChecked: true, isMissing: true));
+                id, displayName, isChecked: true, isMissing: true));
         }
     }
 
