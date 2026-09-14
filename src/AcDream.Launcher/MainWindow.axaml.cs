@@ -116,7 +116,7 @@ public sealed partial class MainWindow : Window
         }
         else if (viewModel.IsCharacterOptionsOpen)
         {
-            CharacterPluginsTextBox.Focus();
+            CharacterPluginsPanel.Focus();
         }
         else if (viewModel.IsSessionLogOpen)
         {
