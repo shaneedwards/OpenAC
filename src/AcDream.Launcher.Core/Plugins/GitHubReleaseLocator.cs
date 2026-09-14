@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace AcDream.Launcher.Core.Plugins;
 
 /// <summary>Builds and parses the <c>github.com/.../releases/.../download/...</c> URLs the plugin
@@ -5,6 +7,33 @@ namespace AcDream.Launcher.Core.Plugins;
 public static class GitHubReleaseLocator
 {
     private const string Host = "github.com";
+
+    /// <summary>GitHub username rule: alphanumeric with single, non-leading, non-trailing hyphens,
+    /// 1-39 characters.</summary>
+    private static readonly Regex OwnerPattern = new(
+        @"\A(?=.{1,39}\z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\z",
+        RegexOptions.Compiled);
+
+    private static readonly Regex NamePattern = new(
+        @"\A[A-Za-z0-9._-]{1,100}\z",
+        RegexOptions.Compiled);
+
+    /// <summary>The owner/name shape both <see cref="TryParseRepoUrl"/> and
+    /// <c>PluginCatalog</c>'s list validation enforce, so a repo string is never trusted with only
+    /// one of the two checking it.</summary>
+    public static bool IsValidRepo(string repo)
+    {
+        if (string.IsNullOrEmpty(repo))
+            return false;
+
+        string[] parts = repo.Split('/');
+        return parts.Length == 2 && IsValidOwner(parts[0]) && IsValidName(parts[1]);
+    }
+
+    private static bool IsValidOwner(string owner) => OwnerPattern.IsMatch(owner);
+
+    private static bool IsValidName(string name) =>
+        name is not "." and not ".." && NamePattern.IsMatch(name);
 
     public static Uri LatestAsset(string repo, string assetName) =>
         BuildUri(repo, $"releases/latest/download/{Uri.EscapeDataString(assetName)}");
@@ -37,7 +66,7 @@ public static class GitHubReleaseLocator
         string[] segments = uri.AbsolutePath
             .Trim('/')
             .Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length != 2)
+        if (segments.Length != 2 || !IsValidOwner(segments[0]) || !IsValidName(segments[1]))
             return false;
 
         repo = $"{segments[0]}/{segments[1]}";
@@ -54,14 +83,14 @@ public static class GitHubReleaseLocator
     private static (string Owner, string Name) SplitRepo(string repo)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repo);
-        string[] parts = repo.Split('/');
-        if (parts.Length != 2 || parts[0].Length == 0 || parts[1].Length == 0)
+        if (!IsValidRepo(repo))
         {
             throw new ArgumentException(
                 $"'{repo}' is not an 'owner/name' repository.",
                 nameof(repo));
         }
 
+        string[] parts = repo.Split('/');
         return (parts[0], parts[1]);
     }
 }

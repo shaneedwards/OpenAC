@@ -34,6 +34,38 @@ public sealed class PluginReleaseClientTests
     }
 
     [Fact]
+    public async Task ARedirectToADifferentRepoIsUnavailable()
+    {
+        Uri repoUri = GitHubReleaseLocator.LatestAsset("shaneedwards/openac-plugin-hello", "plugin.json");
+        Uri impostorUri = GitHubReleaseLocator.TaggedAsset(
+            "attacker/evil-repo",
+            "v9.9.9",
+            "plugin.json");
+        var handler = new SequenceHandler((_, index) => index switch
+        {
+            0 => Redirect(HttpStatusCode.Found, impostorUri),
+            _ => Ok(Encoding.UTF8.GetBytes("{}")),
+        });
+        var client = PluginReleaseClient.CreateForTransportTest(handler);
+
+        PluginReleaseFetchResult result = await client.FetchDocumentAsync(repoUri);
+
+        Assert.Equal(PluginReleaseFetchStatus.Unavailable, result.Status);
+    }
+
+    [Fact]
+    public async Task ATransportFailureIsUnavailableNotAThrow()
+    {
+        var handler = new ThrowingHandler(new HttpRequestException("connection reset"));
+        var client = PluginReleaseClient.CreateForTransportTest(handler);
+
+        PluginReleaseFetchResult result = await client.FetchDocumentAsync(
+            new Uri("https://example.test/plugin.json"));
+
+        Assert.Equal(PluginReleaseFetchStatus.Unavailable, result.Status);
+    }
+
+    [Fact]
     public async Task NonHttpsHopIsRejectedBeforeItIsRequested()
     {
         var start = new Uri("https://example.test/plugin.json");
@@ -133,6 +165,13 @@ public sealed class PluginReleaseClientTests
     {
         Content = new ByteArrayContent(body),
     };
+
+    private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) => throw exception;
+    }
 
     private sealed class SequenceHandler(
         Func<HttpRequestMessage, int, HttpResponseMessage> respond)

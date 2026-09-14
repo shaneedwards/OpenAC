@@ -96,11 +96,13 @@ public sealed record LauncherPluginManifest(
     IReadOnlyList<LauncherPluginHostKind>? Hosts)
 {
     private static readonly Regex IdPattern = new(
-        @"^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$",
+        @"\A[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+\z",
         RegexOptions.Compiled);
 
     public static LauncherPluginManifest Parse(string json)
     {
+        RejectDuplicateTopLevelProperties(json);
+
         ManifestDto? dto;
         try
         {
@@ -261,6 +263,38 @@ public sealed record LauncherPluginManifest(
     {
         if (string.IsNullOrWhiteSpace(value))
             throw new LauncherPluginManifestException($"missing required field: {jsonFieldName}");
+    }
+
+    /// <summary>Unlike Core's reader, where a duplicate property's last value silently wins, the
+    /// launcher's own reader refuses one outright: an install decision should never hinge on which
+    /// of two conflicting property spellings a JSON writer happened to put last.</summary>
+    private static void RejectDuplicateTopLevelProperties(string json)
+    {
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(json);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return;
+
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (JsonProperty property in document.RootElement.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                {
+                    throw new LauncherPluginManifestException(
+                        $"duplicate property: {property.Name}");
+                }
+            }
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

@@ -14,6 +14,33 @@ public sealed class PluginInstallerTests
     private const string Id = "edwards.hello";
 
     [Fact]
+    public async Task InstallRejectsAZipEntryOverTheSharedContractCap()
+    {
+        using var fixture = new Fixture();
+        // 70 MiB: over the contract's 64 MiB per-entry/zip caps, under every invented cap this
+        // installer used before it read them off the plan (256/512 MiB).
+        byte[] oversizedPayload = new byte[70 * 1024 * 1024];
+        Random.Shared.NextBytes(oversizedPayload);
+        byte[] manifestBytes = Encoding.UTF8.GetBytes(Fixture.ManifestJson(Id, "0.1.0"));
+        byte[] zipBytes = UpdateTestData.CreateZip(
+        [
+            ("plugin.json", manifestBytes, null),
+            ($"{Id}.dll", oversizedPayload, null),
+        ]);
+        var release = new Fixture.Release(
+            Id,
+            "0.1.0",
+            manifestBytes,
+            zipBytes,
+            UpdateTestData.Sha256(zipBytes),
+            $"{Id}-0.1.0.zip");
+        fixture.RegisterRelease(Repo, release);
+
+        await Assert.ThrowsAsync<LauncherUpdateException>(() =>
+            fixture.Installer.InstallOrUpdateAsync(Repo, null, null));
+    }
+
+    [Fact]
     public async Task InstallSucceedsAndWritesAConfirmedRecord()
     {
         using var fixture = new Fixture();
@@ -182,6 +209,24 @@ public sealed class PluginInstallerTests
             fixture.Installer.InstallOrUpdateAsync(Repo, null, null));
 
         Assert.Contains("someoneElse/openac-plugin-hello", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InstallRefusedWhenIdCollidesWithADifferentCaseSpellingOfAManualPlugin()
+    {
+        using var fixture = new Fixture();
+        string manualDirectory = Path.Combine(fixture.Paths.PluginsDirectory, "someones-copy");
+        Directory.CreateDirectory(manualDirectory);
+        File.WriteAllText(
+            Path.Combine(manualDirectory, "plugin.json"),
+            Fixture.ManifestJson("Edwards.Hello", "0.0.1"));
+        var release = fixture.BuildRelease(Id, "0.1.0");
+        fixture.RegisterRelease(Repo, release);
+
+        LauncherUpdateException error = await Assert.ThrowsAsync<LauncherUpdateException>(() =>
+            fixture.Installer.InstallOrUpdateAsync(Repo, null, null));
+
+        Assert.Contains("manually installed", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

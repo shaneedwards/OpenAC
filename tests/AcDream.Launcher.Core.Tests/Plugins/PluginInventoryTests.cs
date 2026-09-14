@@ -117,6 +117,19 @@ public sealed class PluginInventoryTests : IDisposable
         Assert.Null(inventory.Find("nobody.home", clientResolution: null, catalog: null));
     }
 
+    [Fact]
+    public void FindIgnoresCase()
+    {
+        WriteManifest(
+            Path.Combine(_paths.PluginsDirectory, "edwards.hello"),
+            "edwards.hello",
+            "0.1.0");
+        InstalledPluginRecordStore recordStore = MakeRecordStore();
+        var inventory = new PluginInventory(_paths, recordStore);
+
+        Assert.NotNull(inventory.Find("Edwards.Hello", clientResolution: null, catalog: null));
+    }
+
     [Theory]
     [InlineData(null, "client not installed")]
     [InlineData("0.0.9", "requires OpenAC 0.1.0 or newer (this is 0.0.9)")]
@@ -160,6 +173,9 @@ public sealed class PluginInventoryTests : IDisposable
         Assert.Null(
             PluginInventory.FindBlockReason(catalog, "edwards.hello", LauncherVersion.Parse("0.1.1")));
         Assert.Null(PluginInventory.FindBlockReason(null, "edwards.hello", LauncherVersion.Parse("0.1.0")));
+        Assert.Equal(
+            "test",
+            PluginInventory.FindBlockReason(catalog, "Edwards.Hello", LauncherVersion.Parse("0.1.0")));
     }
 
     private InstalledPluginRecordStore MakeRecordStore() =>
