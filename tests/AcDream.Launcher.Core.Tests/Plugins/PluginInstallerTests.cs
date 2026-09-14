@@ -65,6 +65,80 @@ public sealed class PluginInstallerTests
     }
 
     [Fact]
+    public async Task InstallLeavesNoEmptyStagingOrTrashFolder()
+    {
+        using var fixture = new Fixture();
+        var release = fixture.BuildRelease(Id, "0.1.0");
+        fixture.RegisterRelease(Repo, release);
+
+        await fixture.Installer.InstallOrUpdateAsync(Repo, null, null);
+
+        Assert.False(Directory.Exists(Path.Combine(fixture.Paths.PluginsDirectory, ".staging")));
+        Assert.False(Directory.Exists(Path.Combine(fixture.Paths.PluginsDirectory, ".trash")));
+    }
+
+    [Fact]
+    public async Task UpdateLeavesNoEmptyStagingOrTrashFolder()
+    {
+        using var fixture = new Fixture();
+        var first = fixture.BuildRelease(Id, "0.1.0");
+        fixture.RegisterRelease(Repo, first);
+        await fixture.Installer.InstallOrUpdateAsync(Repo, null, null);
+
+        var second = fixture.BuildRelease(Id, "0.2.0");
+        fixture.RegisterRelease(Repo, second);
+        await fixture.Installer.InstallOrUpdateAsync(Repo, null, null);
+
+        Assert.False(Directory.Exists(Path.Combine(fixture.Paths.PluginsDirectory, ".staging")));
+        Assert.False(Directory.Exists(Path.Combine(fixture.Paths.PluginsDirectory, ".trash")));
+    }
+
+    [Fact]
+    public async Task RemoveLeavesNoEmptyTrashFolder()
+    {
+        using var fixture = new Fixture();
+        var release = fixture.BuildRelease(Id, "0.1.0");
+        fixture.RegisterRelease(Repo, release);
+        await fixture.Installer.InstallOrUpdateAsync(Repo, null, null);
+
+        fixture.Installer.Remove(Id, deleteStorage: false);
+
+        Assert.False(Directory.Exists(Path.Combine(fixture.Paths.PluginsDirectory, ".trash")));
+    }
+
+    [Fact]
+    public void RecoverReclaimsLeftoverEmptyStagingAndTrashFolders()
+    {
+        using var fixture = new Fixture();
+        string stagingRoot = Path.Combine(fixture.Paths.PluginsDirectory, ".staging");
+        string trashRoot = Path.Combine(fixture.Paths.PluginsDirectory, ".trash");
+        Directory.CreateDirectory(stagingRoot);
+        Directory.CreateDirectory(trashRoot);
+
+        fixture.Installer.Recover();
+
+        Assert.False(Directory.Exists(stagingRoot));
+        Assert.False(Directory.Exists(trashRoot));
+    }
+
+    [Fact]
+    public async Task InstallNeverDeletesAStagingFolderSomethingElseIsStillUsing()
+    {
+        using var fixture = new Fixture();
+        string stagingRoot = Path.Combine(fixture.Paths.PluginsDirectory, ".staging");
+        string strayDirectory = Path.Combine(stagingRoot, "someone-elses-transaction");
+        Directory.CreateDirectory(strayDirectory);
+        File.WriteAllText(Path.Combine(strayDirectory, "in-progress.txt"), "still here");
+        var release = fixture.BuildRelease(Id, "0.1.0");
+        fixture.RegisterRelease(Repo, release);
+
+        await fixture.Installer.InstallOrUpdateAsync(Repo, null, null);
+
+        Assert.True(Directory.Exists(strayDirectory));
+        Assert.True(File.Exists(Path.Combine(strayDirectory, "in-progress.txt")));
+    }
+
+    [Fact]
     public async Task HashMismatchAbortsAndLeavesNoStaging()
     {
         using var fixture = new Fixture();

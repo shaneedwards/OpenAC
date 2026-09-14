@@ -235,6 +235,7 @@ public sealed class PluginInstaller
         {
             VerifiedArtifactDownloader.TryDelete(zipPath);
             SafeZipExtractor.TryDeleteDirectory(stagingDirectory);
+            TryDeleteIfEmpty(Path.Combine(_paths.PluginsDirectory, ".staging"));
         }
     }
 
@@ -262,6 +263,8 @@ public sealed class PluginInstaller
                 Directory.Move(targetDirectory, trashDirectory);
                 SafeZipExtractor.TryDeleteDirectory(trashDirectory);
             }
+
+            TryDeleteIfEmpty(Path.Combine(_paths.PluginsDirectory, ".trash"));
 
             _recordStore.Records.RemoveAll(record =>
                 string.Equals(record.Id, id, StringComparison.OrdinalIgnoreCase));
@@ -294,6 +297,8 @@ public sealed class PluginInstaller
                 {
                     SafeZipExtractor.TryDeleteDirectory(directory);
                 }
+
+                TryDeleteIfEmpty(stagingRoot);
             }
 
             string downloadsRoot = Path.Combine(_paths.CacheDirectory, "plugin-downloads");
@@ -321,6 +326,8 @@ public sealed class PluginInstaller
                         SafeZipExtractor.TryDeleteDirectory(trashDirectory);
                     }
                 }
+
+                TryDeleteIfEmpty(trashRoot);
             }
 
             bool changed = ReconcilePendingRecords();
@@ -450,6 +457,8 @@ public sealed class PluginInstaller
         {
             SafeZipExtractor.TryDeleteDirectory(trashDirectory);
         }
+
+        TryDeleteIfEmpty(Path.Combine(_paths.PluginsDirectory, ".trash"));
     }
 
     private void Upsert(InstalledPluginRecord record)
@@ -471,6 +480,16 @@ public sealed class PluginInstaller
         string trashRoot = Path.Combine(_paths.PluginsDirectory, ".trash");
         Directory.CreateDirectory(trashRoot);
         return Path.Combine(trashRoot, $"{id}-{Guid.NewGuid():N}");
+    }
+
+    /// <summary>Reclaims <c>.staging</c>/<c>.trash</c> once their last entry is gone, never a
+    /// directory something else still has files in.</summary>
+    private static void TryDeleteIfEmpty(string directory)
+    {
+        if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
+        {
+            SafeZipExtractor.TryDeleteDirectory(directory);
+        }
     }
 
     private static string IdFromTrashPath(string trashDirectory)

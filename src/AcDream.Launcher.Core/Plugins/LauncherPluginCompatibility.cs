@@ -10,6 +10,9 @@ public static class LauncherPluginCompatibility
 {
     public const string ClientNotInstalled = "client not installed";
 
+    /// <summary>A row's compatibility line and whether it should read as a warning.</summary>
+    public readonly record struct CompatibilityDescription(string Text, bool IsWarning);
+
     public static string? Evaluate(
         LauncherPluginManifest manifest,
         LaunchMode launchMode,
@@ -26,6 +29,44 @@ public static class LauncherPluginCompatibility
                 + $"{string.Join(" or ", hosts.Select(DescribeHost))} host";
         }
 
+        return VersionOnlyReason(manifest, clientVersion);
+    }
+
+    /// <summary>The Discover/Installed row's compatibility line: always populated, unlike
+    /// <see cref="Evaluate"/>'s single-host verdict, so a host restriction is never hidden behind a
+    /// blank line. A version failure is reported even on a manifest's only supported host, since
+    /// switching host would not fix it; <see cref="CompatibilityDescription.IsWarning"/> is true only
+    /// for that case, so a host restriction or a missing client keep the row's usual styling.</summary>
+    public static CompatibilityDescription Describe(
+        LauncherPluginManifest manifest,
+        LauncherVersion? clientVersion)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+
+        if (clientVersion is null)
+        {
+            return new CompatibilityDescription("Client not installed", IsWarning: false);
+        }
+
+        if (VersionOnlyReason(manifest, clientVersion) is { } versionReason)
+        {
+            return new CompatibilityDescription(versionReason, IsWarning: true);
+        }
+
+        IReadOnlyList<LauncherPluginHostKind> hosts = manifest.Hosts
+            ?? [LauncherPluginHostKind.Graphical, LauncherPluginHostKind.Headless];
+        bool graphical = hosts.Contains(LauncherPluginHostKind.Graphical);
+        bool headless = hosts.Contains(LauncherPluginHostKind.Headless);
+        if (graphical && headless)
+        {
+            return new CompatibilityDescription($"Compatible with OpenAC {clientVersion}", IsWarning: false);
+        }
+
+        return new CompatibilityDescription(graphical ? "Graphical only" : "Headless only", IsWarning: false);
+    }
+
+    private static string? VersionOnlyReason(LauncherPluginManifest manifest, LauncherVersion? clientVersion)
+    {
         LauncherPluginHostVersion? installed = LauncherPluginHostVersion.FromLauncherVersion(clientVersion);
         if (installed is not { } version)
             return ClientNotInstalled;

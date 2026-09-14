@@ -19,6 +19,7 @@ public sealed class PluginDiscoverRowViewModel(
 {
     private string? _latestVersion;
     private string? _compatibility;
+    private bool _compatibilityIsWarning;
 
     public string Id { get; } = id;
     public string Name { get; } = name;
@@ -54,11 +55,29 @@ public sealed class PluginDiscoverRowViewModel(
             if (SetProperty(ref _compatibility, value))
             {
                 OnPropertyChanged(nameof(HasCompatibilityNote));
+                OnPropertyChanged(nameof(ShowCompatibilityWarning));
+                OnPropertyChanged(nameof(ShowCompatibilityMuted));
             }
         }
     }
 
     public bool HasCompatibilityNote => !string.IsNullOrWhiteSpace(Compatibility);
+
+    public bool CompatibilityIsWarning
+    {
+        get => _compatibilityIsWarning;
+        set
+        {
+            if (SetProperty(ref _compatibilityIsWarning, value))
+            {
+                OnPropertyChanged(nameof(ShowCompatibilityWarning));
+                OnPropertyChanged(nameof(ShowCompatibilityMuted));
+            }
+        }
+    }
+
+    public bool ShowCompatibilityWarning => HasCompatibilityNote && CompatibilityIsWarning;
+    public bool ShowCompatibilityMuted => HasCompatibilityNote && !CompatibilityIsWarning;
 }
 
 /// <summary>One installed plugin, shown on the Installed list.</summary>
@@ -67,7 +86,8 @@ public sealed class PluginInstalledRowViewModel(
     string displayName,
     string version,
     string sourceBadge,
-    string? compatibility,
+    string compatibility,
+    bool compatibilityIsWarning,
     string? blocked,
     bool conflict,
     bool canRemove,
@@ -82,8 +102,11 @@ public sealed class PluginInstalledRowViewModel(
     public string Version { get; } = version;
     public string SourceBadge { get; } = sourceBadge;
     public string Summary { get; } = $"{id} · v{version} · {sourceBadge}";
-    public string? Compatibility { get; } = compatibility;
+    public string Compatibility { get; } = compatibility;
     public bool HasCompatibilityNote => !string.IsNullOrWhiteSpace(Compatibility);
+    public bool CompatibilityIsWarning { get; } = compatibilityIsWarning;
+    public bool ShowCompatibilityWarning => HasCompatibilityNote && CompatibilityIsWarning;
+    public bool ShowCompatibilityMuted => HasCompatibilityNote && !CompatibilityIsWarning;
     public string? Blocked { get; } = blocked;
     public bool IsBlocked => !string.IsNullOrWhiteSpace(Blocked);
     public bool Conflict { get; } = conflict;
@@ -331,6 +354,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                 info.Version,
                 DescribeSource(info.Source),
                 info.Compatibility,
+                info.CompatibilityIsWarning,
                 info.Blocked,
                 info.Conflict,
                 canRemove,
@@ -352,6 +376,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             {
                 row.LatestVersion = cached.LatestVersion;
                 row.Compatibility = cached.Compatibility;
+                row.CompatibilityIsWarning = cached.CompatibilityIsWarning;
             }
 
             Discover.Add(row);
@@ -406,17 +431,18 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             }
 
             LauncherVersion? clientVersion = _clientVersionResolver()?.Version;
-            string? gui = LauncherPluginCompatibility.Evaluate(manifest, LaunchMode.Gui, clientVersion);
-            string? headless = LauncherPluginCompatibility.Evaluate(manifest, LaunchMode.Headless, clientVersion);
-            string? compatibility = string.Equals(gui, headless, StringComparison.Ordinal) ? gui : null;
-            var details = new DiscoverDetails(manifest.Version, compatibility);
+            LauncherPluginCompatibility.CompatibilityDescription compatibility =
+                LauncherPluginCompatibility.Describe(manifest, clientVersion);
+            var details = new DiscoverDetails(manifest.Version, compatibility.Text, compatibility.IsWarning);
             _discoverDetailsCache[row.Id] = details;
             row.LatestVersion = details.LatestVersion;
             row.Compatibility = details.Compatibility;
+            row.CompatibilityIsWarning = details.CompatibilityIsWarning;
         }
     }
 
-    private readonly record struct DiscoverDetails(string LatestVersion, string? Compatibility);
+    private readonly record struct DiscoverDetails(
+        string LatestVersion, string Compatibility, bool CompatibilityIsWarning);
 
     private void OpenInstallDialog(string repo, string pluginId, string displayName)
     {
@@ -638,13 +664,55 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         try
         {
             _composition.Installer.Remove(_removePluginId, RemoveDeleteStorage);
-            IsRemoveDialogOpen = false;
-            _ = CheckNowAsync();
         }
         catch (Exception ex)
         {
             Error = string.IsNullOrWhiteSpace(ex.Message)
                 ? "The plugin could not be removed."
+                : ex.Message;
+            return;
+        }
+
+        IsRemoveDialogOpen = false;
+        _ = CheckNowAsync();
+        StripFromEveryCharacter(_removePluginId);
+    }
+
+    /// <summary>The remove dialog's own profile write (L-312): every character still holding the
+    /// removed id loses it, so reinstalling it never inherits an old enable. Reuses the same
+    /// <see cref="ILauncherOrchestrator.UpdateCharacterSettings"/> path <see cref="EnableForCharacters"/>
+    /// saves through. Runs after <see cref="PluginInstaller.Remove"/> has already succeeded, so trouble
+    /// here is reported without undoing the removal.</summary>
+    private void StripFromEveryCharacter(string pluginId)
+    {
+        List<LauncherCharacterSnapshot> snapshots = [.. _orchestrator.GetSnapshot().Servers
+            .SelectMany(server => server.Accounts)
+            .SelectMany(account => account.Characters)];
+        try
+        {
+            foreach (LauncherCharacterSnapshot snapshot in snapshots)
+            {
+                if (!snapshot.Plugins.Contains(pluginId, StringComparer.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                List<string> plugins = snapshot.Plugins
+                    .Where(id => !string.Equals(id, pluginId, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                _orchestrator.UpdateCharacterSettings(
+                    snapshot.ServerName,
+                    snapshot.AccountName,
+                    snapshot.Name,
+                    snapshot.LaunchMode,
+                    plugins,
+                    snapshot.LoginCommands);
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = string.IsNullOrWhiteSpace(ex.Message)
+                ? "The plugin was removed, but could not be unchecked for every character."
                 : ex.Message;
         }
     }
