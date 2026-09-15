@@ -129,7 +129,10 @@
           <Button Content="Check now" Command="{Binding Plugins.CheckNowCommand}" />
         </StackPanel>
       </Grid>
-      <TextBlock Grid.Row="1" Text="{Binding Plugins.Error}" Foreground="#FFB0A0" IsVisible="{Binding Plugins.HasError}" TextWrapping="Wrap" Margin="0,0,0,6" />
+      <StackPanel Grid.Row="1" Spacing="2" Margin="0,0,0,6">
+        <TextBlock Text="{Binding Plugins.Error}" Foreground="#FFB0A0" IsVisible="{Binding Plugins.HasError}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Plugins.StatusText}" Classes="muted" IsVisible="{Binding Plugins.HasStatusText}" TextWrapping="Wrap" />
+      </StackPanel>
       <ScrollViewer Grid.Row="2" x:Name="PluginsScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="10">
           <StackPanel Spacing="5">
@@ -145,7 +148,7 @@
                         <TextBlock Text="{Binding Summary}" Classes="muted" FontSize="12" />
                         <TextBlock Text="{Binding Compatibility}" IsVisible="{Binding ShowCompatibilityWarning}" Foreground="#DBB573" FontSize="12" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding Compatibility}" IsVisible="{Binding ShowCompatibilityMuted}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding Blocked, StringFormat='Blocked: {0}'}" IsVisible="{Binding IsBlocked}" Foreground="#FFB0A0" FontSize="12" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding BlockedText}" IsVisible="{Binding IsBlocked}" Foreground="#FFB0A0" FontSize="12" TextWrapping="Wrap" />
                         <TextBlock Text="A newer client version bundles this plugin; it will replace this copy on update." IsVisible="{Binding Conflict}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding UpdateWithheldReason, StringFormat='Update withheld: {0}'}" IsVisible="{Binding HasUpdateWithheldReason}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       </StackPanel>

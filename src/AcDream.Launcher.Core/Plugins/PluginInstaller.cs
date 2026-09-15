@@ -142,8 +142,8 @@ public sealed class PluginInstaller
         string targetDirectory = Path.Combine(_paths.PluginsDirectory, manifest.Id);
         if (existingRecord is null && Directory.Exists(targetDirectory))
         {
-            // The full path stays out of the player-facing message and lives only in the inner
-            // exception, for whatever eventually reads the launcher's own log.
+            // The full path stays out of the player-facing message; the inner exception keeps it
+            // for diagnostics.
             throw new LauncherUpdateException(
                 $"A folder named {manifest.Id} is already in your plugins folder, and the "
                 + "launcher didn't install it. Move or delete that folder, then try again.",

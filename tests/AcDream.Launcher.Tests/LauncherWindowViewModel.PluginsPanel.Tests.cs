@@ -440,6 +440,7 @@ public sealed partial class LauncherWindowViewModelTests
             viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
         Assert.Equal("test", managed.Blocked);
         Assert.True(managed.IsBlocked);
+        Assert.Equal("Blocked: test", managed.BlockedText);
     }
 
     [Fact]
@@ -458,6 +459,103 @@ public sealed partial class LauncherWindowViewModelTests
         viewModel.ConfigurePlugins(composition, () => null);
 
         await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+        await viewModel.Plugins.RefreshDiscoverDetailsAsync();
+
+        Assert.Empty(viewModel.Plugins.Discover);
+    }
+
+    [Fact]
+    public async Task DiscoverKeepsAPluginBlockedOnAnOlderVersionUntilItsLatestClears()
+    {
+        using var fixture = new PluginPanelFixture();
+        byte[] remoteManifest = PluginPanelFixture.ManifestJson(
+            "edwards.discoverable", "0.2.0", "0.1.0", ["headless", "graphical"]);
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(System.Text.Encoding.UTF8.GetBytes("""
+                    {
+                      "schemaVersion": 1,
+                      "plugins": [
+                        { "id": "edwards.discoverable", "name": "edwards.discoverable",
+                          "author": "Shane Edwards", "description": "Test fixture.",
+                          "repo": "shaneedwards/openac-plugin-hello" }
+                      ],
+                      "blocked": [
+                        { "id": "edwards.discoverable", "versions": ["0.1.0"], "reason": "test" }
+                      ]
+                    }
+                    """));
+            }
+
+            if (request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json"))
+            {
+                return Ok(remoteManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        PluginDiscoverRowViewModel row = Assert.Single(viewModel.Plugins.Discover);
+
+        await viewModel.Plugins.RefreshDiscoverDetailsAsync();
+
+        Assert.Single(viewModel.Plugins.Discover);
+        Assert.Equal("0.2.0", row.LatestVersion);
+    }
+
+    [Fact]
+    public async Task DiscoverHidesAPluginOnceItsLatestVersionIsFoundBlocked()
+    {
+        using var fixture = new PluginPanelFixture();
+        byte[] remoteManifest = PluginPanelFixture.ManifestJson(
+            "edwards.discoverable", "0.2.0", "0.1.0", ["headless", "graphical"]);
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(System.Text.Encoding.UTF8.GetBytes("""
+                    {
+                      "schemaVersion": 1,
+                      "plugins": [
+                        { "id": "edwards.discoverable", "name": "edwards.discoverable",
+                          "author": "Shane Edwards", "description": "Test fixture.",
+                          "repo": "shaneedwards/openac-plugin-hello" }
+                      ],
+                      "blocked": [
+                        { "id": "edwards.discoverable", "versions": ["0.2.0"], "reason": "test" }
+                      ]
+                    }
+                    """));
+            }
+
+            if (request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json"))
+            {
+                return Ok(remoteManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        Assert.Single(viewModel.Plugins.Discover);
+
         await viewModel.Plugins.RefreshDiscoverDetailsAsync();
 
         Assert.Empty(viewModel.Plugins.Discover);
@@ -493,15 +591,31 @@ public sealed partial class LauncherWindowViewModelTests
     }
 
     [Fact]
-    public async Task AddFromUrlForAnAlreadyInstalledRepoShowsAMessageWithNoDialogOrRequest()
+    public async Task AddFromUrlForAnAlreadyInstalledRepoShowsAMessageWithNoExtraRequest()
     {
         using var fixture = new PluginPanelFixture();
         fixture.WriteManifest("edwards.hello", "0.1.1", ["headless"]);
         fixture.AddRecord("edwards.hello", "shaneedwards/openac-plugin-hello", "0.1.1");
-        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
-            ? Ok(fixture.ListJson())
-            : throw new InvalidOperationException(
-                "An already-installed repo must not fetch its manifest: " + request.RequestUri));
+        byte[] currentManifest = PluginPanelFixture.ManifestJson(
+            "edwards.hello", "0.1.1", "0.1.0", ["headless"]);
+        Uri manifestUri = GitHubReleaseLocator.LatestAsset(
+            "shaneedwards/openac-plugin-hello", "plugin.json");
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            // Check itself already fetches this manifest to evaluate updates; Add from URL must
+            // resolve the repo match from the record store alone, not fetch a second time.
+            if (request.RequestUri == manifestUri)
+            {
+                return Ok(currentManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
 
         using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
             fixture.Paths, PluginListUri, handler);
@@ -514,9 +628,93 @@ public sealed partial class LauncherWindowViewModelTests
         await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
 
         Assert.False(viewModel.Plugins.InstallDialog.IsOpen);
-        Assert.Equal("edwards.hello is already installed.", viewModel.Plugins.Error);
+        Assert.Equal("edwards.hello is already installed.", viewModel.Plugins.StatusText);
+        Assert.False(viewModel.Plugins.HasError);
         Assert.Equal(string.Empty, viewModel.Plugins.AddFromUrlText);
         Assert.Equal(1, handler.Requests.Count(uri => uri == PluginListUri));
+        Assert.Equal(1, handler.Requests.Count(uri => uri == manifestUri));
+    }
+
+    [Fact]
+    public async Task AddFromUrlMatchesAnAlreadyInstalledRepoCaseInsensitively()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.hello", "0.1.1", ["headless"]);
+        fixture.AddRecord("edwards.hello", "shaneedwards/openac-plugin-hello", "0.1.1");
+        byte[] currentManifest = PluginPanelFixture.ManifestJson(
+            "edwards.hello", "0.1.1", "0.1.0", ["headless"]);
+        Uri manifestUri = GitHubReleaseLocator.LatestAsset(
+            "shaneedwards/openac-plugin-hello", "plugin.json");
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            if (request.RequestUri == manifestUri)
+            {
+                return Ok(currentManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        viewModel.Plugins.AddFromUrlText = "https://github.com/ShaneEdwards/Openac-Plugin-Hello";
+        await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
+
+        Assert.False(viewModel.Plugins.InstallDialog.IsOpen);
+        Assert.Equal("edwards.hello is already installed.", viewModel.Plugins.StatusText);
+        Assert.False(viewModel.Plugins.HasError);
+        Assert.Equal(1, handler.Requests.Count(uri => uri == manifestUri));
+    }
+
+    [Fact]
+    public async Task AddFromUrlRefusesAManifestIdAlreadyInstalledFromADifferentRepo()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.hello", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.hello", "shaneedwards/openac-plugin-hello", "0.1.0");
+        byte[] otherManifest = PluginPanelFixture.ManifestJson(
+            "edwards.hello", "0.1.0", "0.1.0", ["headless"]);
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            if (request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "someone/other-plugin", "plugin.json"))
+            {
+                return Ok(otherManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        viewModel.Plugins.AddFromUrlText = "https://github.com/someone/other-plugin";
+        await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
+
+        Assert.False(viewModel.Plugins.InstallDialog.IsOpen);
+        Assert.Equal(
+            "'edwards.hello' is already installed from 'shaneedwards/openac-plugin-hello'.",
+            viewModel.Plugins.Error);
+        Assert.False(viewModel.Plugins.HasStatusText);
     }
 
     [Fact]

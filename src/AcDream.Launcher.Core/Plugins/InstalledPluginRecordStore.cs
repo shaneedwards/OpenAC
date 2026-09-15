@@ -31,7 +31,9 @@ public sealed record InstalledPluginRecord(
     PendingPluginInstall? Pending)
 {
     /// <summary>Tolerates a record written before L-313 dropped the acknowledgement checkbox; the
-    /// launcher itself never reads or sets it.</summary>
+    /// launcher never sets it, and <see cref="InstalledPluginRecordStore.Load"/> clears it so a
+    /// save never carries an old value forward.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTimeOffset? WarningAcceptedAt { get; init; }
 }
 
@@ -131,7 +133,7 @@ public sealed class InstalledPluginRecordStore
             }
         }
 
-        Records = records;
+        Records = records.ConvertAll(record => record with { WarningAcceptedAt = null });
         return true;
     }
 

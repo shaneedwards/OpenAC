@@ -66,9 +66,7 @@ Every install and update dialog shows a short notice: plugins are made by
 third parties, not OpenAC, and installing one is the player's choice and
 responsibility; an unlisted plugin adds that it is not on the curated list.
 The plugin is downloaded and unzipped, never run automatically, and stays
-disabled until the player chooses to enable it, whether or not the notice
-implies review — it does not, deliberately: OpenAC may or may not have
-looked at any given plugin, listed or not.
+disabled until the player chooses to enable it.
 
 Installing never enables a plugin. Choose **None** to install without
 enabling anything, **All characters**, or **Choose** to pick specific
