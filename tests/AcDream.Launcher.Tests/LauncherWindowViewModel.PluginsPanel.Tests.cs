@@ -493,6 +493,163 @@ public sealed partial class LauncherWindowViewModelTests
     }
 
     [Fact]
+    public async Task AddFromUrlForAnAlreadyInstalledRepoShowsAMessageWithNoDialogOrRequest()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.hello", "0.1.1", ["headless"]);
+        fixture.AddRecord("edwards.hello", "shaneedwards/openac-plugin-hello", "0.1.1");
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : throw new InvalidOperationException(
+                "An already-installed repo must not fetch its manifest: " + request.RequestUri));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        viewModel.Plugins.AddFromUrlText = "https://github.com/shaneedwards/openac-plugin-hello";
+        await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
+
+        Assert.False(viewModel.Plugins.InstallDialog.IsOpen);
+        Assert.Equal("edwards.hello is already installed.", viewModel.Plugins.Error);
+        Assert.Equal(string.Empty, viewModel.Plugins.AddFromUrlText);
+        Assert.Equal(1, handler.Requests.Count(uri => uri == PluginListUri));
+    }
+
+    [Fact]
+    public async Task PluginCommandsReenableAfterAnyDialogCloses()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
+        PluginDiscoverRowViewModel discover = Assert.Single(viewModel.Plugins.Discover);
+        viewModel.Plugins.AddFromUrlText = "https://github.com/someone/other-plugin";
+
+        int checkNowNotifications = 0;
+        int addFromUrlNotifications = 0;
+        viewModel.Plugins.CheckNowCommand.CanExecuteChanged += (_, _) => checkNowNotifications++;
+        viewModel.Plugins.AddFromUrlCommand.CanExecuteChanged += (_, _) => addFromUrlNotifications++;
+
+        // Cancel the install dialog.
+        discover.InstallCommand.Execute(null);
+        viewModel.CloseActiveModal();
+        Assert.True(checkNowNotifications > 0);
+        Assert.True(addFromUrlNotifications > 0);
+        Assert.True(managed.RemoveCommand!.CanExecute(null));
+        Assert.True(discover.InstallCommand.CanExecute(null));
+        Assert.True(viewModel.Plugins.CheckNowCommand.CanExecute(null));
+        Assert.True(viewModel.Plugins.AddFromUrlCommand.CanExecute(null));
+
+        // Cancel the remove dialog.
+        checkNowNotifications = 0;
+        managed.RemoveCommand!.Execute(null);
+        viewModel.CloseActiveModal();
+        Assert.True(checkNowNotifications > 0);
+        Assert.True(managed.RemoveCommand.CanExecute(null));
+        Assert.True(discover.InstallCommand.CanExecute(null));
+        Assert.True(viewModel.Plugins.CheckNowCommand.CanExecute(null));
+        Assert.True(viewModel.Plugins.AddFromUrlCommand.CanExecute(null));
+
+        // A refused install leaves the dialog open with an error; Cancel from there still
+        // re-enables every Plugins command.
+        checkNowNotifications = 0;
+        discover.InstallCommand.Execute(null);
+        await viewModel.Plugins.InstallDialog.ConfirmCommand.ExecuteAsync();
+        Assert.True(viewModel.Plugins.InstallDialog.IsOpen);
+        Assert.True(viewModel.Plugins.InstallDialog.HasError);
+        viewModel.Plugins.InstallDialog.CancelCommand.Execute(null);
+        Assert.True(checkNowNotifications > 0);
+        Assert.True(managed.RemoveCommand.CanExecute(null));
+        Assert.True(discover.InstallCommand.CanExecute(null));
+        Assert.True(viewModel.Plugins.CheckNowCommand.CanExecute(null));
+        Assert.True(viewModel.Plugins.AddFromUrlCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task ReopeningCharacterOptionsAfterARemoveShowsTheAbsentRowNotMissing()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        var character = new LauncherCharacterSnapshot(
+            "Local ACE", "testaccount", "+Holder", "0x50000001",
+            LaunchMode.Headless, ["edwards.managed"], [], false, "Ready");
+        using var orchestrator = new FakeLauncherOrchestrator
+        {
+            ServersOverride =
+            [
+                new LauncherServerSnapshot("Local ACE", "127.0.0.1", 9000,
+                [
+                    new LauncherAccountSnapshot("Local ACE", "testaccount", [character],
+                        HasRunningActivity: false, ActivityStatus: "Ready"),
+                ]),
+            ],
+        };
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        LauncherAccountServerRowViewModel row = viewModel.Accounts[0].Servers[0];
+        row.SelectedCharacter = "+Holder";
+        row.OptionsCommand.Execute(null);
+        CharacterPluginChoiceViewModel ticked = Assert.Single(viewModel.CharacterPluginChoices);
+        Assert.Equal("edwards.managed", ticked.Id);
+        Assert.False(ticked.IsMissing);
+        Assert.True(ticked.IsChecked);
+        viewModel.CloseActiveModal();
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, r => r.Id == "edwards.managed");
+        managed.RemoveCommand!.Execute(null);
+        viewModel.Plugins.ConfirmRemoveCommand.Execute(null);
+
+        // The real orchestrator persists the strip and raises StateChanged synchronously
+        // (MutateProfiles); the fake only records the call, so the test applies the same result
+        // here before reopening.
+        orchestrator.ServersOverride =
+        [
+            orchestrator.ServersOverride![0] with
+            {
+                Accounts = [orchestrator.ServersOverride[0].Accounts[0] with
+                {
+                    Characters = [character with { Plugins = [] }],
+                }],
+            },
+        ];
+        orchestrator.RaiseStateChanged();
+
+        row.SelectedCharacter = "+Holder";
+        row.OptionsCommand.Execute(null);
+
+        Assert.Empty(viewModel.CharacterPluginChoices);
+        viewModel.SaveCharacterSettingsCommand.Execute(null);
+        var saved = orchestrator.SettingsUpdates.Last(update => update.Character == "+Holder");
+        Assert.Empty(saved.Plugins);
+    }
+
+    [Fact]
     public void EnableForCharactersSkipsCharactersTheInstalledHostsDoNotSupport()
     {
         using var fixture = new PluginPanelFixture();
