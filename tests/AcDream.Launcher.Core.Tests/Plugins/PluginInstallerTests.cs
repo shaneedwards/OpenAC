@@ -214,7 +214,16 @@ public sealed class PluginInstallerTests
         LauncherUpdateException error = await Assert.ThrowsAsync<LauncherUpdateException>(() =>
             fixture.Installer.InstallOrUpdateAsync(Repo, null, null));
 
-        Assert.Contains("already exists", error.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            $"A folder named {Id} is already in your plugins folder, and the launcher didn't "
+            + "install it. Move or delete that folder, then try again.",
+            error.Message);
+        Assert.DoesNotContain(
+            fixture.Paths.PluginsDirectory, error.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            fixture.Paths.PluginsDirectory,
+            error.InnerException!.Message,
+            StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(collidingDirectory, "leftover.txt")));
     }
 
@@ -273,7 +282,6 @@ public sealed class PluginInstallerTests
             "v0.1.0",
             new string('a', 64),
             DateTimeOffset.UtcNow,
-            null,
             null));
         fixture.RecordStore.Save();
         var release = fixture.BuildRelease(Id, "0.1.0");
@@ -382,7 +390,6 @@ public sealed class PluginInstallerTests
             "v0.1.0",
             new string('a', 64),
             DateTimeOffset.UtcNow,
-            null,
             Pending: new PendingPluginInstall("0.2.0", "v0.2.0", new string('b', 64))));
         fixture.RecordStore.Save();
 
@@ -412,7 +419,6 @@ public sealed class PluginInstallerTests
             "v0.1.0",
             new string('a', 64),
             DateTimeOffset.UtcNow,
-            null,
             Pending: new PendingPluginInstall("0.2.0", "v0.2.0", new string('b', 64))));
         fixture.RecordStore.Save();
 
@@ -436,7 +442,6 @@ public sealed class PluginInstallerTests
             Tag: null,
             ZipSha256: null,
             DateTimeOffset.UtcNow,
-            null,
             Pending: new PendingPluginInstall("0.1.0", "v0.1.0", new string('a', 64))));
         fixture.RecordStore.Save();
 

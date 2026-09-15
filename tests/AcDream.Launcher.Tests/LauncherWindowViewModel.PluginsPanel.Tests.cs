@@ -142,8 +142,59 @@ public sealed partial class LauncherWindowViewModelTests
         PluginInstalledRowViewModel managed = Assert.Single(
             viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
         Assert.False(managed.UpdateAvailable);
+        Assert.False(managed.HasUpdateWithheldReason);
+        Assert.Null(managed.UpdateWithheldReason);
+    }
+
+    [Fact]
+    public async Task UpdateWithheldReasonExplainsABlockedRelease()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
+        byte[] remoteManifest = PluginPanelFixture.ManifestJson(
+            "edwards.managed", "0.2.0", "0.1.0", ["headless"]);
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(System.Text.Encoding.UTF8.GetBytes("""
+                    {
+                      "schemaVersion": 1,
+                      "plugins": [
+                        { "id": "edwards.discoverable", "name": "edwards.discoverable",
+                          "author": "Shane Edwards", "description": "Test fixture.",
+                          "repo": "shaneedwards/openac-plugin-hello" }
+                      ],
+                      "blocked": [
+                        { "id": "edwards.managed", "versions": ["0.2.0"], "reason": "test" }
+                      ]
+                    }
+                    """));
+            }
+
+            if (request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json"))
+            {
+                return Ok(remoteManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
+        Assert.False(managed.UpdateAvailable);
         Assert.True(managed.HasUpdateWithheldReason);
-        Assert.Equal("not newer", managed.UpdateWithheldReason);
+        Assert.Equal("the plugin is blocked", managed.UpdateWithheldReason);
     }
 
     [Fact]
@@ -224,7 +275,7 @@ public sealed partial class LauncherWindowViewModelTests
     }
 
     [Fact]
-    public async Task InstallIsEnabledInsideTheOpenInstallDialogOnceTheWarningIsAcknowledged()
+    public async Task InstallIsEnabledInsideTheOpenInstallDialogWithNoTick()
     {
         using var fixture = new PluginPanelFixture();
         var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
@@ -244,9 +295,172 @@ public sealed partial class LauncherWindowViewModelTests
         Assert.True(dialog.IsOpen);
         Assert.True(viewModel.IsModalOpen);
 
-        dialog.IsWarningAcknowledged = true;
-
         Assert.True(dialog.ConfirmCommand.CanExecute(null));
+        Assert.Equal(
+            "Plugins are made by third parties, not OpenAC. Installing one is your choice and "
+            + "your responsibility. Only install plugins from authors you trust.",
+            dialog.WarningText);
+    }
+
+    [Fact]
+    public async Task UnlistedInstallNoticeAddsANotOnTheListLine()
+    {
+        using var fixture = new PluginPanelFixture();
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "someone/unlisted-plugin", "plugin.json")
+                ? Ok(PluginPanelFixture.ManifestJson("someone.unlisted", "0.1.0", "0.1.0", ["headless"]))
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        viewModel.Plugins.AddFromUrlText = "https://github.com/someone/unlisted-plugin";
+        await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
+
+        PluginInstallDialogViewModel dialog = viewModel.Plugins.InstallDialog;
+        Assert.True(dialog.IsOpen);
+        Assert.True(dialog.ConfirmCommand.CanExecute(null));
+        Assert.Equal(
+            "Plugins are made by third parties, not OpenAC. Installing one is your choice and "
+            + "your responsibility. Only install plugins from authors you trust.\n"
+            + "This plugin is not on the OpenAC plugin list.",
+            dialog.WarningText);
+    }
+
+    [Fact]
+    public async Task UpdateDialogShowsNoEnableChoice()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
+        byte[] remoteManifest = PluginPanelFixture.ManifestJson(
+            "edwards.managed", "0.2.0", "0.1.0", ["headless"]);
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            if (request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json"))
+            {
+                return Ok(remoteManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
+        managed.UpdateCommand!.Execute(null);
+
+        PluginInstallDialogViewModel dialog = viewModel.Plugins.InstallDialog;
+        Assert.True(dialog.IsOpen);
+        Assert.True(dialog.IsUpdate);
+        Assert.False(dialog.ShowEnableChoice);
+    }
+
+    [Fact]
+    public async Task InstalledRowSourceBadgesDescribeWhereThePluginCameFrom()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord(
+            "edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0", PluginInstallSource.Listed);
+        fixture.WriteManifest("someone.unlisted", "0.1.0", ["headless"]);
+        fixture.AddRecord(
+            "someone.unlisted", "someone/unlisted-plugin", "0.1.0", PluginInstallSource.Unlisted);
+        fixture.WriteManifest("someone.manual", "1.0.0", ["headless"]);
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        Assert.Equal(
+            "Listed",
+            Assert.Single(viewModel.Plugins.Installed, row => row.Id == "edwards.managed").SourceBadge);
+        Assert.Equal(
+            "Unlisted",
+            Assert.Single(viewModel.Plugins.Installed, row => row.Id == "someone.unlisted").SourceBadge);
+        Assert.Equal(
+            "Manual",
+            Assert.Single(viewModel.Plugins.Installed, row => row.Id == "someone.manual").SourceBadge);
+    }
+
+    [Fact]
+    public async Task BlockedInstalledPluginShowsAPrefixedBadge()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
+        fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(System.Text.Encoding.UTF8.GetBytes("""
+                {
+                  "schemaVersion": 1,
+                  "plugins": [
+                    { "id": "edwards.discoverable", "name": "edwards.discoverable",
+                      "author": "Shane Edwards", "description": "Test fixture.",
+                      "repo": "shaneedwards/openac-plugin-hello" }
+                  ],
+                  "blocked": [
+                    { "id": "edwards.managed", "versions": ["0.1.0"], "reason": "test" }
+                  ]
+                }
+                """))
+            : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, row => row.Id == "edwards.managed");
+        Assert.Equal("test", managed.Blocked);
+        Assert.True(managed.IsBlocked);
+    }
+
+    [Fact]
+    public async Task DiscoverHidesABlockedListedPluginAndMakesNoDetailRequestForIt()
+    {
+        using var fixture = new PluginPanelFixture();
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson(blockDiscoverId: true))
+            : throw new InvalidOperationException(
+                "A blocked, not-installed plugin must never be fetched: " + request.RequestUri));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+        await viewModel.Plugins.RefreshDiscoverDetailsAsync();
+
+        Assert.Empty(viewModel.Plugins.Discover);
     }
 
     [Fact]
@@ -514,24 +728,24 @@ public sealed partial class LauncherWindowViewModelTests
                 """);
         }
 
-        public void AddRecord(string id, string repo, string version)
+        public void AddRecord(
+            string id, string repo, string version, PluginInstallSource source = PluginInstallSource.Listed)
         {
             InstalledPluginRecordStore store = InstalledPluginRecordStore.ForApplicationPaths(Paths);
             store.Load();
             store.Records.Add(new InstalledPluginRecord(
                 id,
                 repo,
-                PluginInstallSource.Listed,
+                source,
                 version,
                 "v" + version,
                 new string('a', 64),
                 DateTimeOffset.UtcNow,
-                null,
                 null));
             store.Save();
         }
 
-        public byte[] ListJson(string discoverId = "edwards.discoverable") =>
+        public byte[] ListJson(string discoverId = "edwards.discoverable", bool blockDiscoverId = false) =>
             System.Text.Encoding.UTF8.GetBytes($$"""
             {
               "schemaVersion": 1,
@@ -539,7 +753,11 @@ public sealed partial class LauncherWindowViewModelTests
                 { "id": "{{discoverId}}", "name": "{{discoverId}}", "author": "Shane Edwards",
                   "description": "Test fixture.", "repo": "shaneedwards/openac-plugin-hello" }
               ],
-              "blocked": []
+              "blocked": [
+                {{(blockDiscoverId
+                  ? $$"""{ "id": "{{discoverId}}", "versions": ["*"], "reason": "test" }"""
+                  : "")}}
+              ]
             }
             """);
 

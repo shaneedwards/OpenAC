@@ -21,7 +21,7 @@ public sealed class PluginInstallDialogViewModelTests
             "edwards.hello",
             "Hello",
             isListed: true,
-            warningPreviouslyAccepted: true,
+            isUpdate: false,
             Characters,
             _ => Task.FromResult(new PluginInstallResult("edwards.hello", "0.1.0", WasUpdate: false)),
             (id, chosen) => enableCalls.Add((id, chosen)));
@@ -46,7 +46,7 @@ public sealed class PluginInstallDialogViewModelTests
             "edwards.hello",
             "Hello",
             isListed: true,
-            warningPreviouslyAccepted: true,
+            isUpdate: false,
             Characters,
             _ => Task.FromResult(new PluginInstallResult("edwards.hello", "0.1.0", WasUpdate: false)),
             (id, chosen) => enableCalls.Add((id, chosen)));
@@ -69,7 +69,7 @@ public sealed class PluginInstallDialogViewModelTests
             "edwards.hello",
             "Hello",
             isListed: true,
-            warningPreviouslyAccepted: true,
+            isUpdate: false,
             Characters,
             _ => Task.FromResult(new PluginInstallResult("edwards.hello", "0.1.0", WasUpdate: false)),
             (id, chosen) => enableCalls.Add((id, chosen)));
@@ -92,7 +92,7 @@ public sealed class PluginInstallDialogViewModelTests
             "edwards.hello",
             "Hello",
             isListed: true,
-            warningPreviouslyAccepted: true,
+            isUpdate: false,
             Characters,
             _ => Task.FromResult(new PluginInstallResult("edwards.hello", "0.1.0", WasUpdate: false)),
             (id, chosen) => enableCalls.Add((id, chosen)));
@@ -113,7 +113,7 @@ public sealed class PluginInstallDialogViewModelTests
             "edwards.hello",
             "Hello",
             isListed: true,
-            warningPreviouslyAccepted: true,
+            isUpdate: false,
             Characters,
             _ =>
             {
@@ -135,28 +135,28 @@ public sealed class PluginInstallDialogViewModelTests
     }
 
     [Fact]
-    public void UnlistedRepoRequiresAcknowledgementBeforeConfirmIsAvailable()
+    public void ConfirmIsEnabledAssoonAsAListedInstallOpensWithNoTick()
     {
         var dialog = new PluginInstallDialogViewModel();
         dialog.Open(
-            "someone-else/some-plugin",
-            "someone.plugin",
-            "Some Plugin",
-            isListed: false,
-            warningPreviouslyAccepted: false,
-            [],
-            _ => Task.FromResult(new PluginInstallResult("someone.plugin", "0.1.0", WasUpdate: false)),
+            "shaneedwards/openac-plugin-hello",
+            "edwards.hello",
+            "Hello",
+            isListed: true,
+            isUpdate: false,
+            Characters,
+            _ => Task.FromResult(new PluginInstallResult("edwards.hello", "0.1.0", WasUpdate: false)),
             (_, _) => { });
 
-        Assert.Contains("has not been reviewed", dialog.WarningText, StringComparison.Ordinal);
-        Assert.False(dialog.ConfirmCommand.CanExecute(null));
-
-        dialog.IsWarningAcknowledged = true;
         Assert.True(dialog.ConfirmCommand.CanExecute(null));
+        Assert.Equal(
+            "Plugins are made by third parties, not OpenAC. Installing one is your choice and "
+            + "your responsibility. Only install plugins from authors you trust.",
+            dialog.WarningText);
     }
 
     [Fact]
-    public void TickingAcknowledgementDoesNotHideItsOwnCheckbox()
+    public void ConfirmIsEnabledAssoonAsAnUnlistedInstallOpensWithNoTick()
     {
         var dialog = new PluginInstallDialogViewModel();
         dialog.Open(
@@ -164,33 +164,35 @@ public sealed class PluginInstallDialogViewModelTests
             "someone.plugin",
             "Some Plugin",
             isListed: false,
-            warningPreviouslyAccepted: false,
+            isUpdate: false,
             [],
             _ => Task.FromResult(new PluginInstallResult("someone.plugin", "0.1.0", WasUpdate: false)),
             (_, _) => { });
 
-        Assert.True(dialog.ShowAcknowledgementCheckbox);
-
-        dialog.IsWarningAcknowledged = true;
-
-        Assert.True(dialog.ShowAcknowledgementCheckbox);
+        Assert.True(dialog.ConfirmCommand.CanExecute(null));
+        Assert.Equal(
+            "Plugins are made by third parties, not OpenAC. Installing one is your choice and "
+            + "your responsibility. Only install plugins from authors you trust.\n"
+            + "This plugin is not on the OpenAC plugin list.",
+            dialog.WarningText);
     }
 
     [Fact]
-    public void ARepoAcceptedOnceOpensPreAcknowledged()
+    public void UpdateOpensWithNoEnableChoiceOffered()
     {
         var dialog = new PluginInstallDialogViewModel();
         dialog.Open(
-            "someone-else/some-plugin",
-            "someone.plugin",
-            "Some Plugin",
-            isListed: false,
-            warningPreviouslyAccepted: true,
-            [],
-            _ => Task.FromResult(new PluginInstallResult("someone.plugin", "0.1.0", WasUpdate: false)),
+            "shaneedwards/openac-plugin-hello",
+            "edwards.hello",
+            "Hello",
+            isListed: true,
+            isUpdate: true,
+            Characters,
+            _ => Task.FromResult(new PluginInstallResult("edwards.hello", "0.2.0", WasUpdate: true)),
             (_, _) => { });
 
-        Assert.False(dialog.RequiresAcknowledgement);
+        Assert.True(dialog.IsUpdate);
+        Assert.False(dialog.ShowEnableChoice);
         Assert.True(dialog.ConfirmCommand.CanExecute(null));
     }
 
@@ -205,7 +207,7 @@ public sealed class PluginInstallDialogViewModelTests
             "edwards.hello",
             "Hello",
             isListed: true,
-            warningPreviouslyAccepted: true,
+            isUpdate: false,
             Characters,
             _ =>
             {

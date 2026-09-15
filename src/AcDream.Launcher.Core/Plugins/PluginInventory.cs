@@ -23,7 +23,8 @@ public sealed record InstalledPluginInfo(
     string Compatibility,
     bool CompatibilityIsWarning,
     string? Blocked,
-    bool Conflict);
+    bool Conflict,
+    PluginInstallSource? ListedSource);
 
 /// <summary>Builds the Installed view and the character checklist by scanning
 /// <c>DataDirectory/plugins</c> and, when a client is installed, its bundled
@@ -65,6 +66,7 @@ public sealed class PluginInventory
                 ownDirectory,
                 record is null ? InstalledPluginSource.Manual : InstalledPluginSource.Managed,
                 record?.Repo,
+                record?.Source,
                 catalog,
                 clientVersion));
         }
@@ -83,6 +85,7 @@ public sealed class PluginInventory
                         ownDirectory,
                         InstalledPluginSource.Bundled,
                         repo: null,
+                        listedSource: null,
                         catalog,
                         clientVersion));
                 }
@@ -158,6 +161,7 @@ public sealed class PluginInventory
         string directory,
         InstalledPluginSource source,
         string? repo,
+        PluginInstallSource? listedSource,
         PluginCatalog? catalog,
         LauncherVersion? clientVersion)
     {
@@ -176,7 +180,8 @@ public sealed class PluginInventory
             compatibility.Text,
             compatibility.IsWarning,
             blocked,
-            Conflict: false);
+            Conflict: false,
+            listedSource);
     }
 
     private static IEnumerable<(string Directory, LauncherPluginManifest Manifest)> ScanManifests(

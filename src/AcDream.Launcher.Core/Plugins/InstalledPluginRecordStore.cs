@@ -28,8 +28,12 @@ public sealed record InstalledPluginRecord(
     string? Tag,
     string? ZipSha256,
     DateTimeOffset InstalledAt,
-    DateTimeOffset? WarningAcceptedAt,
-    PendingPluginInstall? Pending);
+    PendingPluginInstall? Pending)
+{
+    /// <summary>Tolerates a record written before L-313 dropped the acknowledgement checkbox; the
+    /// launcher itself never reads or sets it.</summary>
+    public DateTimeOffset? WarningAcceptedAt { get; init; }
+}
 
 /// <summary><c>DataDirectory/app/plugins-installed.json</c>: the record of every plugin the launcher
 /// itself installed (L-309). Load/save follow <c>LauncherProfileStore</c>'s temp-file-and-rename,

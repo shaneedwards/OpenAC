@@ -199,10 +199,14 @@ internal sealed class LauncherPluginComposition : IDisposable
         var installedIds = new HashSet<string>(
             installed.Select(info => info.Id),
             StringComparer.OrdinalIgnoreCase);
+        // A blocked, not-yet-installed plugin is a dead end (L-314): omit it before it ever costs
+        // Discover's per-plugin plugin.json request, the same "don't know its version yet, assume
+        // blocked" read SessionConfigComposer already gives a null version.
         IReadOnlyList<PluginDiscoverEntry> discover = catalog is null
             ? []
             : [.. catalog.Plugins
                 .Where(entry => !installedIds.Contains(entry.Id))
+                .Where(entry => !catalog.IsBlocked(entry.Id, version: null))
                 .Select(entry => new PluginDiscoverEntry(
                     entry.Id, entry.Name, entry.Author, entry.Description, entry.Repo))];
 
@@ -212,8 +216,8 @@ internal sealed class LauncherPluginComposition : IDisposable
 
     /// <summary>An advisory badge, not an enforcement decision: the finer min/max/skip compatibility
     /// gate lives on <see cref="PluginInstaller"/>, which refuses the update itself when the user
-    /// acts on it. When a newer release exists but isn't offered, names why ("not newer" when it
-    /// isn't actually newer is the one case this never reaches).</summary>
+    /// acts on it. Names why only when a newer release exists but isn't offered; already-current
+    /// stays silent, since nothing is actually being withheld.</summary>
     private async Task<PluginUpdateCheck> EvaluateUpdateAsync(
         InstalledPluginRecord record,
         PluginCatalog? catalog,
@@ -261,14 +265,16 @@ internal sealed class LauncherPluginComposition : IDisposable
             return PluginUpdateCheck.None;
         }
 
+        // Already current is not withheld: there is no newer release for anything to have held
+        // back, so the badge stays silent rather than reporting "not newer".
         if (remoteVersion.CompareTo(currentVersion) <= 0)
         {
-            return new PluginUpdateCheck(false, "not newer");
+            return PluginUpdateCheck.None;
         }
 
         if (catalog?.IsBlocked(record.Id, remoteVersion) == true)
         {
-            return new PluginUpdateCheck(false, "blocked");
+            return new PluginUpdateCheck(false, "the plugin is blocked");
         }
 
         string? versionReason = VersionOnlyCompatibility(manifest, clientResolution?.Version);

@@ -127,7 +127,6 @@ public sealed class LauncherPluginsViewModel : ObservableObject
 {
     private readonly ILauncherOrchestrator _orchestrator;
     private readonly Func<bool> _canInteract;
-    private readonly HashSet<string> _acknowledgedRepos = new(StringComparer.OrdinalIgnoreCase);
 
     private LauncherPluginComposition? _composition;
     private Func<ClientVersionResolution?> _clientVersionResolver = () => null;
@@ -352,7 +351,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                 info.Id,
                 info.DisplayName,
                 info.Version,
-                DescribeSource(info.Source),
+                DescribeSource(info.Source, info.ListedSource),
                 info.Compatibility,
                 info.CompatibilityIsWarning,
                 info.Blocked,
@@ -368,7 +367,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         foreach (PluginDiscoverEntry entry in outcome.Discover)
         {
             var install = new RelayCommand(
-                () => OpenInstallDialog(entry.Repo, entry.Id, entry.Name),
+                () => OpenInstallDialog(entry.Repo, entry.Id, entry.Name, isUpdate: false),
                 () => _canInteract() && !IsBusy);
             var row = new PluginDiscoverRowViewModel(
                 entry.Id, entry.Name, entry.Author, entry.Description, entry.Repo, install);
@@ -444,7 +443,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
     private readonly record struct DiscoverDetails(
         string LatestVersion, string Compatibility, bool CompatibilityIsWarning);
 
-    private void OpenInstallDialog(string repo, string pluginId, string displayName)
+    private void OpenInstallDialog(string repo, string pluginId, string displayName, bool isUpdate)
     {
         if (_composition is null)
         {
@@ -458,7 +457,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             pluginId,
             displayName,
             isListed,
-            _acknowledgedRepos.Contains(repo),
+            isUpdate,
             BuildCharacterOptions(),
             cancellationToken => InstallAsync(repo, cancellationToken),
             EnableForCharacters);
@@ -468,7 +467,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
     {
         if (info.Repo is { } repo)
         {
-            OpenInstallDialog(repo, info.Id, info.DisplayName);
+            OpenInstallDialog(repo, info.Id, info.DisplayName, isUpdate: true);
         }
     }
 
@@ -478,10 +477,8 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                 repo,
                 _composition.CurrentCatalog,
                 _clientVersionResolver(),
-                warningAcceptedAt: DateTimeOffset.UtcNow,
                 cancellationToken)
             .ConfigureAwait(true);
-        _acknowledgedRepos.Add(repo);
         _ = CheckNowAsync();
         return result;
     }
@@ -609,7 +606,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                     LauncherPluginManifest manifest = LauncherPluginManifest.Parse(
                         Encoding.UTF8.GetString(fetch.Document!.Content));
                     AddFromUrlText = string.Empty;
-                    OpenInstallDialog(repo, manifest.Id, manifest.DisplayName);
+                    OpenInstallDialog(repo, manifest.Id, manifest.DisplayName, isUpdate: false);
                     break;
                 case PluginReleaseFetchStatus.RateLimited:
                     Error = "GitHub is rate limiting; try later.";
@@ -735,13 +732,16 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         }
     }
 
-    private static string DescribeSource(InstalledPluginSource source) => source switch
-    {
-        InstalledPluginSource.Managed => "Installed",
-        InstalledPluginSource.Manual => "Manual",
-        InstalledPluginSource.Bundled => "Bundled",
-        _ => source.ToString(),
-    };
+    private static string DescribeSource(InstalledPluginSource source, PluginInstallSource? listedSource) =>
+        source switch
+        {
+            InstalledPluginSource.Managed => listedSource == PluginInstallSource.Unlisted
+                ? "Unlisted"
+                : "Listed",
+            InstalledPluginSource.Manual => "Manual",
+            InstalledPluginSource.Bundled => "Bundled",
+            _ => source.ToString(),
+        };
 
     private static string FormatAge(TimeSpan age) => age.TotalDays >= 1
         ? $"{age.TotalDays:0} day(s)"
