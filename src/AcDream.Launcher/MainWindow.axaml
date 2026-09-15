@@ -145,7 +145,7 @@
                         <TextBlock Text="{Binding Summary}" Classes="muted" FontSize="12" />
                         <TextBlock Text="{Binding Compatibility}" IsVisible="{Binding ShowCompatibilityWarning}" Foreground="#DBB573" FontSize="12" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding Compatibility}" IsVisible="{Binding ShowCompatibilityMuted}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding Blocked}" IsVisible="{Binding IsBlocked}" Foreground="#FFB0A0" FontSize="12" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Blocked, StringFormat='Blocked: {0}'}" IsVisible="{Binding IsBlocked}" Foreground="#FFB0A0" FontSize="12" TextWrapping="Wrap" />
                         <TextBlock Text="A newer client version bundles this plugin; it will replace this copy on update." IsVisible="{Binding Conflict}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding UpdateWithheldReason, StringFormat='Update withheld: {0}'}" IsVisible="{Binding HasUpdateWithheldReason}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                       </StackPanel>
@@ -536,11 +536,7 @@
           <TextBlock Text="{Binding Plugins.InstallDialog.DisplayName}" FontSize="22" FontWeight="Bold" />
           <SelectableTextBlock Grid.Row="1" Text="{Binding Plugins.InstallDialog.Repo}" Classes="muted" TextWrapping="Wrap" />
           <TextBlock Grid.Row="2" Text="{Binding Plugins.InstallDialog.WarningText}" TextWrapping="Wrap" />
-          <CheckBox Grid.Row="3" Content="I have reviewed this plugin and trust its source"
-                    IsChecked="{Binding Plugins.InstallDialog.IsWarningAcknowledged, Mode=TwoWay}"
-                    IsVisible="{Binding Plugins.InstallDialog.ShowAcknowledgementCheckbox}"
-                    AutomationProperties.Name="Acknowledge plugin source warning" />
-          <StackPanel Grid.Row="4" Spacing="6">
+          <StackPanel Grid.Row="4" Spacing="6" IsVisible="{Binding Plugins.InstallDialog.ShowEnableChoice}">
             <TextBlock Text="Enable for" FontWeight="SemiBold" />
             <RadioButton Content="None (enable later)" GroupName="PluginEnableChoice"
                          IsChecked="{Binding Plugins.InstallDialog.EnableNone, Mode=TwoWay}"

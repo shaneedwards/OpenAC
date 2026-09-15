@@ -49,7 +49,6 @@ public sealed class PluginInventoryTests : IDisposable
             "v0.1.0",
             new string('a', 64),
             DateTimeOffset.UtcNow,
-            null,
             null));
         var inventory = new PluginInventory(_paths, recordStore);
 
@@ -62,11 +61,13 @@ public sealed class PluginInventoryTests : IDisposable
             info => info.Id == "edwards.hello");
         Assert.Equal(InstalledPluginSource.Managed, managed.Source);
         Assert.Equal("shaneedwards/openac-plugin-hello", managed.Repo);
+        Assert.Equal(PluginInstallSource.Listed, managed.ListedSource);
         InstalledPluginInfo manual = Assert.Single(
             plugins,
             info => info.Id == "someone.manual");
         Assert.Equal(InstalledPluginSource.Manual, manual.Source);
         Assert.Null(manual.Repo);
+        Assert.Null(manual.ListedSource);
     }
 
     [Fact]
@@ -90,7 +91,6 @@ public sealed class PluginInventoryTests : IDisposable
             "v0.1.0",
             new string('a', 64),
             DateTimeOffset.UtcNow,
-            null,
             null));
         var inventory = new PluginInventory(_paths, recordStore);
         var clientResolution = new ClientVersionResolution(

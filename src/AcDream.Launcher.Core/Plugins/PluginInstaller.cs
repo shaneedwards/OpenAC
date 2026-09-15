@@ -65,7 +65,6 @@ public sealed class PluginInstaller
         string repo,
         PluginCatalog? catalog,
         ClientVersionResolution? clientResolution,
-        DateTimeOffset? warningAcceptedAt = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repo);
@@ -143,8 +142,13 @@ public sealed class PluginInstaller
         string targetDirectory = Path.Combine(_paths.PluginsDirectory, manifest.Id);
         if (existingRecord is null && Directory.Exists(targetDirectory))
         {
+            // The full path stays out of the player-facing message and lives only in the inner
+            // exception, for whatever eventually reads the launcher's own log.
             throw new LauncherUpdateException(
-                $"'{targetDirectory}' already exists and is not a launcher-managed plugin.");
+                $"A folder named {manifest.Id} is already in your plugins folder, and the "
+                + "launcher didn't install it. Move or delete that folder, then try again.",
+                new LauncherUpdateException(
+                    $"'{targetDirectory}' already exists and is not a launcher-managed plugin."));
         }
 
         if (isUpdate)
@@ -224,7 +228,6 @@ public sealed class PluginInstaller
                     tag,
                     shaFile.Sha256,
                     existingRecord,
-                    warningAcceptedAt,
                     stagingDirectory,
                     targetDirectory);
             }
@@ -401,7 +404,6 @@ public sealed class PluginInstaller
         string newTag,
         string newZipSha256,
         InstalledPluginRecord? existingRecord,
-        DateTimeOffset? warningAcceptedAt,
         string stagingDirectory,
         string targetDirectory)
     {
@@ -415,7 +417,6 @@ public sealed class PluginInstaller
                 Tag: null,
                 ZipSha256: null,
                 InstalledAt: DateTimeOffset.UtcNow,
-                WarningAcceptedAt: warningAcceptedAt,
                 Pending: pending)
             : existingRecord with { Pending = pending };
 

@@ -46,8 +46,7 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
     private CancellationTokenSource? _cancellation;
     private bool _isOpen;
     private bool _isBusy;
-    private bool _isWarningAcknowledged;
-    private bool _showAcknowledgementCheckbox;
+    private bool _isUpdate;
     private PluginEnableChoice _choice = PluginEnableChoice.None;
     private string? _error;
 
@@ -56,7 +55,7 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
         _canInteract = canInteract ?? (() => true);
         ConfirmCommand = new AsyncRelayCommand(
             ConfirmAsync,
-            () => IsOpen && !IsBusy && _canInteract() && (!RequiresAcknowledgement || IsWarningAcknowledged));
+            () => IsOpen && !IsBusy && _canInteract());
         CancelCommand = new RelayCommand(Close, () => !IsBusy);
     }
 
@@ -68,19 +67,30 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
 
     public bool IsListed { get; private set; }
 
-    /// <summary>Warning acceptance is required once per repo (plan, "Warning"); a repo already
-    /// accepted this launcher session opens with the box pre-checked.</summary>
-    public bool RequiresAcknowledgement => !_isWarningAcknowledged;
+    /// <summary>Whether the dialog opened for an already-installed plugin's Update; the enable
+    /// choice is offered only on a first install (plan).</summary>
+    public bool IsUpdate
+    {
+        get => _isUpdate;
+        private set
+        {
+            if (SetProperty(ref _isUpdate, value))
+            {
+                OnPropertyChanged(nameof(ShowEnableChoice));
+            }
+        }
+    }
 
-    /// <summary>Whether this repo needed acknowledgement when the dialog opened, fixed for the
-    /// dialog's lifetime so ticking the box doesn't make it disappear.</summary>
-    public bool ShowAcknowledgementCheckbox => _showAcknowledgementCheckbox;
+    public bool ShowEnableChoice => !IsUpdate;
 
+    /// <summary>The responsibility notice every install and update dialog shows, every time
+    /// (L-313): no wording here says or implies OpenAC reviews plugins, listed or not.</summary>
     public string WarningText => IsListed
-        ? "This plugin will be downloaded and unzipped, never run automatically. "
-            + "It stays disabled until you choose to enable it."
-        : "This repository is not on the OpenAC plugin list; it has not been reviewed. "
-            + "Only install code from a repository you trust.";
+        ? "Plugins are made by third parties, not OpenAC. Installing one is your choice and your "
+            + "responsibility. Only install plugins from authors you trust."
+        : "Plugins are made by third parties, not OpenAC. Installing one is your choice and your "
+            + "responsibility. Only install plugins from authors you trust.\n"
+            + "This plugin is not on the OpenAC plugin list.";
 
     public ObservableCollection<PluginCharacterChoiceViewModel> Characters { get; } = [];
 
@@ -106,19 +116,6 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
             if (SetProperty(ref _isBusy, value))
             {
                 NotifyCommandStates();
-            }
-        }
-    }
-
-    public bool IsWarningAcknowledged
-    {
-        get => _isWarningAcknowledged;
-        set
-        {
-            if (SetProperty(ref _isWarningAcknowledged, value))
-            {
-                OnPropertyChanged(nameof(RequiresAcknowledgement));
-                ConfirmCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -184,7 +181,7 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
         string pluginId,
         string displayName,
         bool isListed,
-        bool warningPreviouslyAccepted,
+        bool isUpdate,
         IReadOnlyList<PluginCharacterOption> characters,
         Func<CancellationToken, Task<PluginInstallResult>> installAsync,
         Action<string, IReadOnlyList<PluginCharacterOption>> enableForCharacters)
@@ -196,6 +193,7 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
         PluginId = pluginId;
         DisplayName = string.IsNullOrWhiteSpace(displayName) ? pluginId : displayName;
         IsListed = isListed;
+        IsUpdate = isUpdate;
         _installAsync = installAsync ?? throw new ArgumentNullException(nameof(installAsync));
         _enableForCharacters = enableForCharacters
             ?? throw new ArgumentNullException(nameof(enableForCharacters));
@@ -206,8 +204,6 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
             Characters.Add(new PluginCharacterChoiceViewModel(option));
         }
 
-        _isWarningAcknowledged = warningPreviouslyAccepted;
-        _showAcknowledgementCheckbox = !warningPreviouslyAccepted;
         Choice = PluginEnableChoice.None;
         Error = null;
         OnPropertyChanged(nameof(Repo));
@@ -216,8 +212,6 @@ public sealed class PluginInstallDialogViewModel : ObservableObject
         OnPropertyChanged(nameof(IsListed));
         OnPropertyChanged(nameof(WarningText));
         OnPropertyChanged(nameof(HasCharacters));
-        OnPropertyChanged(nameof(RequiresAcknowledgement));
-        OnPropertyChanged(nameof(ShowAcknowledgementCheckbox));
         IsOpen = true;
     }
 

@@ -60,7 +60,6 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
             "v0.1.0",
             new string('a', 64),
             DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow,
             Pending: null));
         store.Records.Add(new InstalledPluginRecord(
             "edwards.pending",
@@ -70,7 +69,6 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
             Tag: null,
             ZipSha256: null,
             DateTimeOffset.UtcNow,
-            WarningAcceptedAt: null,
             Pending: new PendingPluginInstall("0.2.0", "v0.2.0", new string('b', 64))));
 
         store.Save();
@@ -103,7 +101,6 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
             "v0.1.0",
             new string('a', 64),
             DateTimeOffset.UtcNow,
-            null,
             null));
 
         Assert.NotNull(store.Find("edwards.hello"));
@@ -194,7 +191,6 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
             "v0.1.0",
             new string('a', 64),
             DateTimeOffset.UtcNow,
-            null,
             null));
 
         store.Save();
@@ -202,5 +198,32 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
         Assert.Equal(
             InstalledPluginRecordStore.OwnerOnlyFileMode,
             File.GetUnixFileMode(store.FilePath));
+    }
+
+    [Fact]
+    public void LoadToleratesARecordWrittenByTheEarlierBuildsWarningAcceptedAtField()
+    {
+        string path = Path.Combine(_root, "app", "plugins-installed.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """
+            {
+              "schemaVersion": 1,
+              "plugins": [
+                { "id": "edwards.hello", "repo": "shaneedwards/openac-plugin-hello",
+                  "source": "listed", "version": "0.1.0", "tag": "v0.1.0",
+                  "zipSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "installedAt": "2026-01-01T00:00:00Z",
+                  "warningAcceptedAt": "2026-01-01T00:00:00Z", "pending": null }
+              ]
+            }
+            """);
+
+        var store = new InstalledPluginRecordStore(path);
+
+        bool loaded = store.Load();
+
+        Assert.True(loaded);
+        InstalledPluginRecord record = Assert.Single(store.Records);
+        Assert.Equal("edwards.hello", record.Id);
     }
 }
