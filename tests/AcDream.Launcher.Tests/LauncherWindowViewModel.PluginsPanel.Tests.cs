@@ -718,6 +718,193 @@ public sealed partial class LauncherWindowViewModelTests
     }
 
     [Fact]
+    public async Task AddFromUrlRefusesAPluginBlockedForAllVersions()
+    {
+        using var fixture = new PluginPanelFixture();
+        byte[] manifest = PluginPanelFixture.ManifestJson(
+            "edwards.hello", "0.1.0", "0.1.0", ["headless"]);
+        Uri manifestUri = GitHubReleaseLocator.LatestAsset(
+            "shaneedwards/openac-plugin-hello", "plugin.json");
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(System.Text.Encoding.UTF8.GetBytes("""
+                    {
+                      "schemaVersion": 1,
+                      "plugins": [
+                        { "id": "edwards.discoverable", "name": "edwards.discoverable",
+                          "author": "Shane Edwards", "description": "Test fixture.",
+                          "repo": "shaneedwards/openac-plugin-hello" }
+                      ],
+                      "blocked": [
+                        { "id": "edwards.hello", "versions": ["*"], "reason": "test" }
+                      ]
+                    }
+                    """));
+            }
+
+            if (request.RequestUri == manifestUri)
+            {
+                return Ok(manifest);
+            }
+
+            throw new InvalidOperationException(
+                "A blocked plugin must never be downloaded: " + request.RequestUri);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        viewModel.Plugins.AddFromUrlText = "https://github.com/shaneedwards/openac-plugin-hello";
+        await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
+
+        Assert.False(viewModel.Plugins.InstallDialog.IsOpen);
+        Assert.Equal("'edwards.hello' is blocked: test", viewModel.Plugins.Error);
+        Assert.False(viewModel.Plugins.HasStatusText);
+    }
+
+    [Fact]
+    public async Task AddFromUrlRefusesAPluginBlockedForItsFetchedLatestVersion()
+    {
+        using var fixture = new PluginPanelFixture();
+        byte[] manifest = PluginPanelFixture.ManifestJson(
+            "edwards.hello", "0.2.0", "0.1.0", ["headless"]);
+        Uri manifestUri = GitHubReleaseLocator.LatestAsset(
+            "shaneedwards/openac-plugin-hello", "plugin.json");
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(System.Text.Encoding.UTF8.GetBytes("""
+                    {
+                      "schemaVersion": 1,
+                      "plugins": [
+                        { "id": "edwards.discoverable", "name": "edwards.discoverable",
+                          "author": "Shane Edwards", "description": "Test fixture.",
+                          "repo": "shaneedwards/openac-plugin-hello" }
+                      ],
+                      "blocked": [
+                        { "id": "edwards.hello", "versions": ["0.2.0"], "reason": "test" }
+                      ]
+                    }
+                    """));
+            }
+
+            if (request.RequestUri == manifestUri)
+            {
+                return Ok(manifest);
+            }
+
+            throw new InvalidOperationException(
+                "A blocked plugin must never be downloaded: " + request.RequestUri);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        viewModel.Plugins.AddFromUrlText = "https://github.com/shaneedwards/openac-plugin-hello";
+        await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
+
+        Assert.False(viewModel.Plugins.InstallDialog.IsOpen);
+        Assert.Equal("'edwards.hello' is blocked: test", viewModel.Plugins.Error);
+        Assert.False(viewModel.Plugins.HasStatusText);
+    }
+
+    [Fact]
+    public async Task RemovingAPluginClearsAStaleStatusLine()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.hello", "0.1.1", ["headless"]);
+        fixture.AddRecord("edwards.hello", "shaneedwards/openac-plugin-hello", "0.1.1");
+        byte[] currentManifest = PluginPanelFixture.ManifestJson(
+            "edwards.hello", "0.1.1", "0.1.0", ["headless"]);
+        Uri manifestUri = GitHubReleaseLocator.LatestAsset(
+            "shaneedwards/openac-plugin-hello", "plugin.json");
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            if (request.RequestUri == manifestUri)
+            {
+                return Ok(currentManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        viewModel.Plugins.AddFromUrlText = "https://github.com/shaneedwards/openac-plugin-hello";
+        await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
+        Assert.True(viewModel.Plugins.HasStatusText);
+
+        PluginInstalledRowViewModel managed = Assert.Single(
+            viewModel.Plugins.Installed, row => row.Id == "edwards.hello");
+        managed.RemoveCommand!.Execute(null);
+        viewModel.Plugins.ConfirmRemoveCommand.Execute(null);
+
+        Assert.False(viewModel.Plugins.HasStatusText);
+    }
+
+    [Fact]
+    public async Task CheckNowClearsAStaleStatusLine()
+    {
+        using var fixture = new PluginPanelFixture();
+        fixture.WriteManifest("edwards.hello", "0.1.1", ["headless"]);
+        fixture.AddRecord("edwards.hello", "shaneedwards/openac-plugin-hello", "0.1.1");
+        byte[] currentManifest = PluginPanelFixture.ManifestJson(
+            "edwards.hello", "0.1.1", "0.1.0", ["headless"]);
+        Uri manifestUri = GitHubReleaseLocator.LatestAsset(
+            "shaneedwards/openac-plugin-hello", "plugin.json");
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            if (request.RequestUri == manifestUri)
+            {
+                return Ok(currentManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        viewModel.Plugins.AddFromUrlText = "https://github.com/shaneedwards/openac-plugin-hello";
+        await viewModel.Plugins.AddFromUrlCommand.ExecuteAsync();
+        Assert.True(viewModel.Plugins.HasStatusText);
+
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        Assert.False(viewModel.Plugins.HasStatusText);
+    }
+
+    [Fact]
     public async Task PluginCommandsReenableAfterAnyDialogCloses()
     {
         using var fixture = new PluginPanelFixture();

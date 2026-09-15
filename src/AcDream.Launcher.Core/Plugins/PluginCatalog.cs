@@ -41,12 +41,16 @@ public sealed record PluginCatalog(
         MaxDepth = 16,
     };
 
-    public bool IsBlocked(string id, LauncherVersion? version)
+    public bool IsBlocked(string id, LauncherVersion? version) => BlockReason(id, version) is not null;
+
+    /// <summary>The reason a release is blocked, or null if it is not.</summary>
+    public string? BlockReason(string id, LauncherVersion? version)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
-        return Blocked.Any(block =>
-            string.Equals(block.Id, id, StringComparison.OrdinalIgnoreCase)
-            && (version is null || block.Matches(version.Value)));
+        return Blocked.FirstOrDefault(block =>
+                string.Equals(block.Id, id, StringComparison.OrdinalIgnoreCase)
+                && (version is null || block.Matches(version.Value)))
+            ?.Reason;
     }
 
     /// <summary>True only for a block covering every version ("*"); a version-specific block needs
