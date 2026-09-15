@@ -305,6 +305,8 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         _cancellation = cancellation;
         IsBusy = true;
         Error = null;
+        // Clears whatever Add from URL left on this line; install and remove both trigger a check.
+        StatusText = null;
         IsRateLimited = false;
         try
         {
@@ -667,6 +669,19 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                     if (installedById is not null)
                     {
                         Error = $"'{manifest.Id}' is already installed from '{installedById.Repo}'.";
+                        break;
+                    }
+
+                    // Blocked for "*" or for this fetched version (L-314): refuse the same way,
+                    // rather than opening a dialog whose Install could only fail.
+                    LauncherVersion? manifestVersion = LauncherVersion.TryParse(
+                        manifest.Version, out LauncherVersion? parsedVersion)
+                        ? parsedVersion
+                        : null;
+                    if (_composition.CurrentCatalog?.BlockReason(manifest.Id, manifestVersion)
+                        is { } blockReason)
+                    {
+                        Error = $"'{manifest.Id}' is blocked: {blockReason}";
                         break;
                     }
 
