@@ -197,6 +197,27 @@ public sealed class PluginInstallDialogViewModelTests
     }
 
     [Fact]
+    public async Task ConfirmingAnUpdateWritesNoCharacterList()
+    {
+        var dialog = new PluginInstallDialogViewModel();
+        List<(string Id, IReadOnlyList<PluginCharacterOption> Characters)> enableCalls = [];
+        dialog.Open(
+            "shaneedwards/openac-plugin-hello",
+            "edwards.hello",
+            "Hello",
+            isListed: true,
+            isUpdate: true,
+            Characters,
+            _ => Task.FromResult(new PluginInstallResult("edwards.hello", "0.2.0", WasUpdate: true)),
+            (id, chosen) => enableCalls.Add((id, chosen)));
+
+        await dialog.ConfirmCommand.ExecuteAsync();
+
+        Assert.False(dialog.IsOpen);
+        Assert.Empty(enableCalls);
+    }
+
+    [Fact]
     public async Task CancelClosesWithoutInstallingOrEnabling()
     {
         var dialog = new PluginInstallDialogViewModel();

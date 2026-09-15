@@ -49,6 +49,16 @@ public sealed record PluginCatalog(
             && (version is null || block.Matches(version.Value)));
     }
 
+    /// <summary>True only for a block covering every version ("*"); a version-specific block needs
+    /// the latest version fetched before it can be judged (L-314).</summary>
+    public bool IsBlockedForAllVersions(string id)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        return Blocked.Any(block =>
+            string.Equals(block.Id, id, StringComparison.OrdinalIgnoreCase)
+            && block.Versions.Contains("*"));
+    }
+
     public static PluginCatalog Parse(string json)
     {
         try

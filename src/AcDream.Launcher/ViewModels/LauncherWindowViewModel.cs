@@ -501,15 +501,6 @@ public sealed partial class LauncherWindowViewModel : ObservableObject, IDisposa
         OnPropertyChanged(nameof(ShowGuiLaunchDisabledReason));
         OnPropertyChanged(nameof(ShowHeadlessLaunchDisabledReason));
         NotifyCommandStates();
-        // An install, update or remove completed behind the install/remove dialog; the character
-        // options draft can only fall behind the character's saved plugin list, never ahead of it.
-        bool pluginDialogClosed =
-            (e.PropertyName == nameof(PluginInstallDialogViewModel.IsOpen) && !Plugins.InstallDialog.IsOpen)
-            || (e.PropertyName == nameof(LauncherPluginsViewModel.IsRemoveDialogOpen) && !Plugins.IsRemoveDialogOpen);
-        if (pluginDialogClosed)
-        {
-            LoadCharacterDraft();
-        }
 
         if (ReferenceEquals(sender, FirstRunWizardShell)
             && e.PropertyName == nameof(FirstRunInstallerViewModel.IsOpen)

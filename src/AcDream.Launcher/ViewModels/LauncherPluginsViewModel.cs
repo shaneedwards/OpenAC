@@ -109,6 +109,7 @@ public sealed class PluginInstalledRowViewModel(
     public bool ShowCompatibilityMuted => HasCompatibilityNote && !CompatibilityIsWarning;
     public string? Blocked { get; } = blocked;
     public bool IsBlocked => !string.IsNullOrWhiteSpace(Blocked);
+    public string? BlockedText => IsBlocked ? $"Blocked: {Blocked}" : null;
     public bool Conflict { get; } = conflict;
     public bool CanRemove { get; } = canRemove;
     public bool UpdateAvailable { get; } = updateAvailable;
@@ -137,6 +138,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
 
     private bool _isBusy;
     private string? _error;
+    private string? _statusText;
     private bool _isRateLimited;
     private string _addFromUrlText = string.Empty;
     private bool _isRemoveDialogOpen;
@@ -227,6 +229,22 @@ public sealed class LauncherPluginsViewModel : ObservableObject
     }
 
     public bool HasError => !string.IsNullOrWhiteSpace(Error);
+
+    /// <summary>An informational result, e.g. "already installed" from Add from URL: shown in the
+    /// panel's normal text, not the error style, since nothing went wrong.</summary>
+    public string? StatusText
+    {
+        get => _statusText;
+        private set
+        {
+            if (SetProperty(ref _statusText, value))
+            {
+                OnPropertyChanged(nameof(HasStatusText));
+            }
+        }
+    }
+
+    public bool HasStatusText => !string.IsNullOrWhiteSpace(StatusText);
 
     public bool IsRateLimited
     {
@@ -429,6 +447,18 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                 continue;
             }
 
+            LauncherVersion? remoteVersion = LauncherVersion.TryParse(manifest.Version, out LauncherVersion? parsed)
+                ? parsed
+                : null;
+            // A version-specific block (L-314) can only be judged once the latest version is known;
+            // a wildcard block never reaches here, since the Check pipeline already hid the row.
+            if (_composition.CurrentCatalog?.IsBlocked(row.Id, remoteVersion) == true)
+            {
+                Discover.Remove(row);
+                OnPropertyChanged(nameof(HasDiscover));
+                continue;
+            }
+
             LauncherVersion? clientVersion = _clientVersionResolver()?.Version;
             LauncherPluginCompatibility.CompatibilityDescription compatibility =
                 LauncherPluginCompatibility.Describe(manifest, clientVersion);
@@ -599,16 +629,17 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         }
 
         InstalledPluginRecord? installedByRepo = _composition.RecordStore.Records.FirstOrDefault(
-            record => string.Equals(record.Repo, repo, StringComparison.Ordinal));
+            record => string.Equals(record.Repo, repo, StringComparison.OrdinalIgnoreCase));
         if (installedByRepo is not null)
         {
             AddFromUrlText = string.Empty;
-            Error = $"{InstalledDisplayName(installedByRepo.Id)} is already installed.";
+            StatusText = $"{InstalledDisplayName(installedByRepo.Id)} is already installed.";
             return;
         }
 
         IsBusy = true;
         Error = null;
+        StatusText = null;
         try
         {
             PluginReleaseFetchResult fetch = await _composition.ReleaseClient
@@ -621,13 +652,21 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                         Encoding.UTF8.GetString(fetch.Document!.Content));
                     AddFromUrlText = string.Empty;
                     // Same repo already installed (a race with another Add or Check between the
-                    // parse above and here): today's "already installed from <repo>" refusal still
-                    // covers the same id from a different repo.
+                    // parse above and here): same neutral status as the early check above.
                     InstalledPluginRecord? installedById = _composition.RecordStore.Find(manifest.Id);
                     if (installedById is not null
-                        && string.Equals(installedById.Repo, repo, StringComparison.Ordinal))
+                        && string.Equals(installedById.Repo, repo, StringComparison.OrdinalIgnoreCase))
                     {
-                        Error = $"{manifest.DisplayName} is already installed.";
+                        StatusText = $"{manifest.DisplayName} is already installed.";
+                        break;
+                    }
+
+                    // The id is already installed from a different repo: refuse up front with the
+                    // same reason PluginInstaller would give, rather than opening a dialog whose
+                    // Install could only fail.
+                    if (installedById is not null)
+                    {
+                        Error = $"'{manifest.Id}' is already installed from '{installedById.Repo}'.";
                         break;
                     }
 

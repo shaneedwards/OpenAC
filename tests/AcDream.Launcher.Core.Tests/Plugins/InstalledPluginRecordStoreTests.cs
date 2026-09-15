@@ -226,4 +226,30 @@ public sealed class InstalledPluginRecordStoreTests : IDisposable
         InstalledPluginRecord record = Assert.Single(store.Records);
         Assert.Equal("edwards.hello", record.Id);
     }
+
+    [Fact]
+    public void SaveAfterLoadNeverWritesWarningAcceptedAt()
+    {
+        string path = Path.Combine(_root, "app", "plugins-installed.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """
+            {
+              "schemaVersion": 1,
+              "plugins": [
+                { "id": "edwards.hello", "repo": "shaneedwards/openac-plugin-hello",
+                  "source": "listed", "version": "0.1.0", "tag": "v0.1.0",
+                  "zipSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "installedAt": "2026-01-01T00:00:00Z",
+                  "warningAcceptedAt": "2026-01-01T00:00:00Z", "pending": null }
+              ]
+            }
+            """);
+
+        var store = new InstalledPluginRecordStore(path);
+        store.Load();
+        store.Save();
+
+        string saved = File.ReadAllText(path);
+        Assert.DoesNotContain("warningAcceptedAt", saved);
+    }
 }

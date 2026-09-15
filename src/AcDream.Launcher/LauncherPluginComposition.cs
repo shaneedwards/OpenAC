@@ -199,14 +199,14 @@ internal sealed class LauncherPluginComposition : IDisposable
         var installedIds = new HashSet<string>(
             installed.Select(info => info.Id),
             StringComparer.OrdinalIgnoreCase);
-        // A blocked, not-yet-installed plugin is a dead end (L-314): omit it before it ever costs
-        // Discover's per-plugin plugin.json request, the same "don't know its version yet, assume
-        // blocked" read SessionConfigComposer already gives a null version.
+        // A plugin blocked for every version is a dead end (L-314): omit it before it ever costs
+        // Discover's per-plugin plugin.json request. A version-specific block still needs that
+        // request to know the latest version, so it stays listed here and is judged afterward.
         IReadOnlyList<PluginDiscoverEntry> discover = catalog is null
             ? []
             : [.. catalog.Plugins
                 .Where(entry => !installedIds.Contains(entry.Id))
-                .Where(entry => !catalog.IsBlocked(entry.Id, version: null))
+                .Where(entry => !catalog.IsBlockedForAllVersions(entry.Id))
                 .Select(entry => new PluginDiscoverEntry(
                     entry.Id, entry.Name, entry.Author, entry.Description, entry.Repo))];
 
