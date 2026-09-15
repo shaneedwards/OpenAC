@@ -549,6 +549,11 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         }
     }
 
+    private string InstalledDisplayName(string pluginId) =>
+        _composition?.Inventory.Find(pluginId, _clientVersionResolver(), _composition.CurrentCatalog)
+            ?.DisplayName
+        ?? pluginId;
+
     private IReadOnlyList<LauncherPluginHostKind> ReadInstalledHosts(string pluginId)
     {
         InstalledPluginInfo? info = _composition?.Inventory.Find(
@@ -593,6 +598,15 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             return;
         }
 
+        InstalledPluginRecord? installedByRepo = _composition.RecordStore.Records.FirstOrDefault(
+            record => string.Equals(record.Repo, repo, StringComparison.Ordinal));
+        if (installedByRepo is not null)
+        {
+            AddFromUrlText = string.Empty;
+            Error = $"{InstalledDisplayName(installedByRepo.Id)} is already installed.";
+            return;
+        }
+
         IsBusy = true;
         Error = null;
         try
@@ -606,6 +620,17 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                     LauncherPluginManifest manifest = LauncherPluginManifest.Parse(
                         Encoding.UTF8.GetString(fetch.Document!.Content));
                     AddFromUrlText = string.Empty;
+                    // Same repo already installed (a race with another Add or Check between the
+                    // parse above and here): today's "already installed from <repo>" refusal still
+                    // covers the same id from a different repo.
+                    InstalledPluginRecord? installedById = _composition.RecordStore.Find(manifest.Id);
+                    if (installedById is not null
+                        && string.Equals(installedById.Repo, repo, StringComparison.Ordinal))
+                    {
+                        Error = $"{manifest.DisplayName} is already installed.";
+                        break;
+                    }
+
                     OpenInstallDialog(repo, manifest.Id, manifest.DisplayName, isUpdate: false);
                     break;
                 case PluginReleaseFetchStatus.RateLimited:
@@ -714,7 +739,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         }
     }
 
-    private void NotifyCommandStates()
+    public void NotifyCommandStates()
     {
         CheckNowCommand.NotifyCanExecuteChanged();
         AddFromUrlCommand.NotifyCanExecuteChanged();

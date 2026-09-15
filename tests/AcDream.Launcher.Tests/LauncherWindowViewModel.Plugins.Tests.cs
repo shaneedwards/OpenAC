@@ -181,6 +181,61 @@ public sealed partial class LauncherWindowViewModelTests
             Assert.Single(viewModel.CharacterPluginChoices).Id);
     }
 
+    [Fact]
+    public void ReopeningCharacterOptionsAfterAProfileChangeShowsTheSavedStateOnTheFirstOpen()
+    {
+        using var orchestrator = new FakeLauncherOrchestrator
+        {
+            ServersOverride =
+            [
+                new LauncherServerSnapshot("Local ACE", "127.0.0.1", 9000,
+                [
+                    new LauncherAccountSnapshot("Local ACE", "testaccount",
+                    [
+                        new LauncherCharacterSnapshot(
+                            "Local ACE", "testaccount", "+Holder", "0x50000001",
+                            LaunchMode.Headless, ["old.plugin"], [], false, "Ready"),
+                    ],
+                    HasRunningActivity: false,
+                    ActivityStatus: "Ready"),
+                ]),
+            ],
+        };
+        using var viewModel = CreateInitialized(orchestrator);
+
+        LauncherAccountServerRowViewModel row = viewModel.Accounts[0].Servers[0];
+        row.SelectedCharacter = "+Holder";
+        row.OptionsCommand.Execute(null);
+        Assert.Equal(
+            "old.plugin (missing)",
+            Assert.Single(viewModel.CharacterPluginChoices).DisplayName);
+        viewModel.CloseActiveModal();
+
+        // A profile change made outside this dialog (another launcher window, editing the profile
+        // file directly): the same character now saves "new.plugin" instead.
+        orchestrator.ServersOverride =
+        [
+            orchestrator.ServersOverride![0] with
+            {
+                Accounts = [orchestrator.ServersOverride[0].Accounts[0] with
+                {
+                    Characters = [orchestrator.ServersOverride[0].Accounts[0].Characters[0] with
+                    {
+                        Plugins = ["new.plugin"],
+                    }],
+                }],
+            },
+        ];
+        orchestrator.RaiseStateChanged();
+
+        row.SelectedCharacter = "+Holder";
+        row.OptionsCommand.Execute(null);
+
+        Assert.Equal(
+            "new.plugin (missing)",
+            Assert.Single(viewModel.CharacterPluginChoices).DisplayName);
+    }
+
     private sealed class PluginChecklistFixture : IDisposable
     {
         private readonly string _root = Path.Combine(
