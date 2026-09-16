@@ -46,7 +46,7 @@ public sealed partial class MainWindow : Window
         if (DataContext is LauncherWindowViewModel viewModel)
         {
             viewModel.PollStatus();
-            viewModel.PollServerHealth();
+            viewModel.PollServerHealth(IsActive);
         }
     }
 
@@ -116,7 +116,7 @@ public sealed partial class MainWindow : Window
         }
         else if (viewModel.IsCharacterOptionsOpen)
         {
-            CharacterPluginsTextBox.Focus();
+            CharacterPluginsPanel.Focus();
         }
         else if (viewModel.IsSessionLogOpen)
         {
@@ -140,6 +140,22 @@ public sealed partial class MainWindow : Window
         else if (viewModel.UpdatePrompt.IsOpen)
         {
             UpdateCloseButton.Focus();
+        }
+        else if (viewModel.Plugins.InstallDialog.IsOpen)
+        {
+            InstallCancelButton.Focus();
+        }
+        else if (viewModel.Plugins.IsRemoveDialogOpen)
+        {
+            RemoveCancelButton.Focus();
+        }
+    }
+
+    private void OnPluginsPanelSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        if (DataContext is LauncherWindowViewModel viewModel)
+        {
+            viewModel.Plugins.SetPanelWidth(e.NewSize.Width);
         }
     }
 
