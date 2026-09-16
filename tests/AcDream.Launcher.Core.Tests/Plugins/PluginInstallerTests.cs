@@ -293,6 +293,45 @@ public sealed class PluginInstallerTests
     }
 
     [Fact]
+    public async Task InstallRefusedWithATooNewCapabilityVocabularySaysToUpdateTheLauncher()
+    {
+        using var fixture = new Fixture();
+        byte[] manifestBytes = Encoding.UTF8.GetBytes(
+            Fixture.ManifestJson(Id, "0.1.0", capabilitiesVersion: LauncherPluginCapabilityVocabulary.Current + 1));
+        var release = new Fixture.Release(
+            Id, "0.1.0", manifestBytes, [], "", $"{Id}-0.1.0.zip");
+        fixture.RegisterRelease(Repo, release);
+
+        LauncherUpdateException error = await Assert.ThrowsAsync<LauncherUpdateException>(() =>
+            fixture.Installer.InstallOrUpdateAsync(Repo, null, null));
+
+        Assert.Equal(PluginInstaller.CapabilityVocabularyRefusal, error.Message);
+        Assert.DoesNotContain("invalid", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.IsType<LauncherPluginCapabilityVersionException>(error.InnerException);
+    }
+
+    [Fact]
+    public async Task InstallRefusedWithAnUnrecognizedCapabilityUnderAKnownVersionIsAnInvalidManifest()
+    {
+        using var fixture = new Fixture();
+        byte[] manifestBytes = Encoding.UTF8.GetBytes(
+            Fixture.ManifestJson(
+                Id,
+                "0.1.0",
+                capabilitiesVersion: LauncherPluginCapabilityVocabulary.Current,
+                capabilitiesJson: """[{ "name": "quantumTeleport", "note": "test" }]"""));
+        var release = new Fixture.Release(
+            Id, "0.1.0", manifestBytes, [], "", $"{Id}-0.1.0.zip");
+        fixture.RegisterRelease(Repo, release);
+
+        LauncherUpdateException error = await Assert.ThrowsAsync<LauncherUpdateException>(() =>
+            fixture.Installer.InstallOrUpdateAsync(Repo, null, null));
+
+        Assert.Contains("The plugin manifest is invalid", error.Message, StringComparison.Ordinal);
+        Assert.IsNotType<LauncherPluginCapabilityVersionException>(error.InnerException);
+    }
+
+    [Fact]
     public async Task UnrecordedFolderWithSameNameIsRefused()
     {
         using var fixture = new Fixture();
@@ -890,8 +929,14 @@ public sealed class PluginInstallerTests
             string id,
             string version,
             string? entryDll = null,
-            string? displayName = null) =>
-            $$"""
+            string? displayName = null,
+            int? capabilitiesVersion = null,
+            string? capabilitiesJson = null)
+        {
+            string capabilitiesFields = capabilitiesVersion is { } v
+                ? $",\n  \"capabilitiesVersion\": {v},\n  \"capabilities\": {capabilitiesJson ?? "[]"}"
+                : "";
+            return $$"""
             {
               "id": "{{id}}",
               "displayName": "{{displayName ?? id}}",
@@ -899,9 +944,10 @@ public sealed class PluginInstallerTests
               "entryDll": "{{entryDll ?? id + ".dll"}}",
               "apiVersion": 1,
               "minHostVersion": "0.1.0",
-              "hosts": ["headless"]
+              "hosts": ["headless"]{{capabilitiesFields}}
             }
             """;
+        }
 
         public sealed record Release(
             string Id,
