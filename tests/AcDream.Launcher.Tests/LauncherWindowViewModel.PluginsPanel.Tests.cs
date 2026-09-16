@@ -463,10 +463,24 @@ public sealed partial class LauncherWindowViewModelTests
     public async Task EscapeClosesTheInstallDialogWithoutInstalling()
     {
         using var fixture = new PluginPanelFixture();
-        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
-            ? Ok(fixture.ListJson())
-            : throw new InvalidOperationException(
-                "Escape must not trigger a network call: " + request.RequestUri));
+        byte[] discoverableManifest = PluginPanelFixture.ManifestJson(
+            "edwards.discoverable", "0.2.0", "0.1.0", ["headless"]);
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            if (request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json"))
+            {
+                return Ok(discoverableManifest);
+            }
+
+            throw new InvalidOperationException(
+                "Escape must not trigger any other network call: " + request.RequestUri);
+        });
 
         using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
             fixture.Paths, PluginListUri, handler);
@@ -476,13 +490,16 @@ public sealed partial class LauncherWindowViewModelTests
         await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
 
         PluginDiscoverRowViewModel row = Assert.Single(viewModel.Plugins.Discover);
+        // Details are not loaded yet, so pressing Install fetches this row's manifest itself.
         row.InstallCommand.Execute(null);
         Assert.True(viewModel.Plugins.InstallDialog.IsOpen);
 
+        int requestsBeforeEscape = handler.Requests.Count;
         viewModel.CloseActiveModal();
 
         Assert.False(viewModel.Plugins.InstallDialog.IsOpen);
         Assert.False(viewModel.IsModalOpen);
+        Assert.Equal(requestsBeforeEscape, handler.Requests.Count);
         Assert.Equal(1, handler.Requests.Count(uri => uri == PluginListUri));
     }
 
@@ -490,10 +507,24 @@ public sealed partial class LauncherWindowViewModelTests
     public async Task InstallIsEnabledInsideTheOpenInstallDialogWithNoTick()
     {
         using var fixture = new PluginPanelFixture();
-        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
-            ? Ok(fixture.ListJson())
-            : throw new InvalidOperationException(
-                "Opening the dialog must not trigger a network call: " + request.RequestUri));
+        byte[] discoverableManifest = PluginPanelFixture.ManifestJson(
+            "edwards.discoverable", "0.2.0", "0.1.0", ["headless"]);
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            if (request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json"))
+            {
+                return Ok(discoverableManifest);
+            }
+
+            throw new InvalidOperationException(
+                "Opening the dialog must not trigger any other network call: " + request.RequestUri);
+        });
 
         using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
             fixture.Paths, PluginListUri, handler);
@@ -1220,9 +1251,27 @@ public sealed partial class LauncherWindowViewModelTests
         using var fixture = new PluginPanelFixture();
         fixture.WriteManifest("edwards.managed", "0.1.0", ["headless"]);
         fixture.AddRecord("edwards.managed", "shaneedwards/openac-plugin-hello", "0.1.0");
-        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
-            ? Ok(fixture.ListJson())
-            : new HttpResponseMessage(HttpStatusCode.NotFound));
+        // No redirect, so this never resolves a release tag: the install dialog's own capability
+        // fetch succeeds (it doesn't need one), but the install itself still refuses, on the tag
+        // mismatch rather than an unavailable release, preserving the "refused install" scenario
+        // below.
+        byte[] discoverableManifest = PluginPanelFixture.ManifestJson(
+            "edwards.discoverable", "0.2.0", "0.1.0", ["headless"]);
+        var handler = new RoutedHandler(request =>
+        {
+            if (request.RequestUri == PluginListUri)
+            {
+                return Ok(fixture.ListJson());
+            }
+
+            if (request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json"))
+            {
+                return Ok(discoverableManifest);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
 
         using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
             fixture.Paths, PluginListUri, handler);
@@ -1688,6 +1737,113 @@ public sealed partial class LauncherWindowViewModelTests
         Assert.Equal("Sends usage counts to my server.", dialog.Capabilities[0].Note);
         Assert.Equal("uses chat", dialog.Capabilities[1].Label);
         Assert.Equal("Reads chat to detect buff requests.", dialog.Capabilities[1].Note);
+    }
+
+    [Fact]
+    public async Task InstallPressedBeforeDetailsLoadFetchesTheManifestAndShowsEveryCapability()
+    {
+        using var fixture = new PluginPanelFixture();
+        byte[] remoteManifest = PluginPanelFixture.ManifestJson(
+            "edwards.discoverable", "0.2.0", "0.1.0", ["headless", "graphical"],
+            capabilitiesVersion: LauncherPluginCapabilityVocabulary.Current,
+            capabilitiesJson: """
+                [
+                  { "name": "network", "note": "Sends usage counts to my server." },
+                  { "name": "chat", "note": "Reads chat to detect buff requests." }
+                ]
+                """);
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json")
+                ? Ok(remoteManifest)
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        // Install is pressed before RefreshDiscoverDetailsAsync ever runs: nothing is cached yet.
+        PluginDiscoverRowViewModel row = Assert.Single(viewModel.Plugins.Discover);
+        Assert.False(row.HasCapabilities);
+        row.InstallCommand.Execute(null);
+
+        PluginInstallDialogViewModel dialog = viewModel.Plugins.InstallDialog;
+        Assert.False(dialog.IsLoadingCapabilities);
+        Assert.True(dialog.HasCapabilities);
+        Assert.Equal(2, dialog.Capabilities.Count);
+        Assert.Equal("uses network", dialog.Capabilities[0].Label);
+        Assert.Equal("uses chat", dialog.Capabilities[1].Label);
+
+        // The row itself now reflects what the dialog fetched, same as a background refresh would.
+        Assert.True(row.HasCapabilities);
+        Assert.Equal("2 capabilities", row.CapabilityCountText);
+    }
+
+    [Fact]
+    public async Task InstallReusesAlreadyLoadedDiscoverDetailsWithoutFetchingAgain()
+    {
+        using var fixture = new PluginPanelFixture();
+        byte[] remoteManifest = PluginPanelFixture.ManifestJson(
+            "edwards.discoverable", "0.2.0", "0.1.0", ["headless", "graphical"],
+            capabilitiesVersion: LauncherPluginCapabilityVocabulary.Current,
+            capabilitiesJson: """[{ "name": "network", "note": "Sends usage counts." }]""");
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json")
+                ? Ok(remoteManifest)
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+        await viewModel.Plugins.RefreshDiscoverDetailsAsync();
+
+        Uri manifestUri = GitHubReleaseLocator.LatestAsset("shaneedwards/openac-plugin-hello", "plugin.json");
+        Assert.Equal(1, handler.Requests.Count(uri => uri == manifestUri));
+
+        Assert.Single(viewModel.Plugins.Discover).InstallCommand.Execute(null);
+
+        PluginInstallDialogViewModel dialog = viewModel.Plugins.InstallDialog;
+        Assert.False(dialog.IsLoadingCapabilities);
+        Assert.True(dialog.HasCapabilities);
+        Assert.Equal(1, handler.Requests.Count(uri => uri == manifestUri));
+    }
+
+    [Fact]
+    public async Task InstallPressedBeforeDetailsLoadLeavesInstallDisabledWhenTheFetchIsRateLimited()
+    {
+        using var fixture = new PluginPanelFixture();
+        var handler = new RoutedHandler(request => request.RequestUri == PluginListUri
+            ? Ok(fixture.ListJson())
+            : request.RequestUri == GitHubReleaseLocator.LatestAsset(
+                "shaneedwards/openac-plugin-hello", "plugin.json")
+                ? new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        using LauncherPluginComposition composition = LauncherPluginComposition.CreateForTest(
+            fixture.Paths, PluginListUri, handler);
+        using var orchestrator = new FakeLauncherOrchestrator();
+        using var viewModel = CreateInitialized(orchestrator);
+        viewModel.ConfigurePlugins(composition, () => null);
+        await viewModel.Plugins.CheckNowCommand.ExecuteAsync();
+
+        Assert.Single(viewModel.Plugins.Discover).InstallCommand.Execute(null);
+
+        PluginInstallDialogViewModel dialog = viewModel.Plugins.InstallDialog;
+        Assert.True(dialog.IsOpen);
+        Assert.False(dialog.IsLoadingCapabilities);
+        Assert.True(dialog.HasCapabilitiesLoadError);
+        Assert.Equal("GitHub is rate limiting; try later.", dialog.CapabilitiesLoadError);
+        Assert.False(dialog.ConfirmCommand.CanExecute(null));
+        Assert.True(dialog.CancelCommand.CanExecute(null));
     }
 
     private sealed class PluginPanelFixture : IDisposable
