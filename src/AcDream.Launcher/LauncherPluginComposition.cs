@@ -15,10 +15,14 @@ internal sealed record PluginDiscoverEntry(
     string Description,
     string Repo);
 
-/// <summary>An installed plugin's newer release: its version, and its compatibility note when that
-/// differs from the row's own (e.g. the new release drops a host the old one supported).</summary>
+/// <summary>An installed plugin's newer release: its version, its compatibility note when that
+/// differs from the row's own (e.g. the new release drops a host the old one supported), and the
+/// capabilities that release declares, for the fresh-consent prompt an added one needs.</summary>
 internal sealed record PluginUpdateAvailability(
-    string Version, string? CompatibilityNote, bool CompatibilityIsWarning);
+    string Version,
+    string? CompatibilityNote,
+    bool CompatibilityIsWarning,
+    IReadOnlyList<LauncherPluginCapabilityDeclaration> Capabilities);
 
 /// <summary>The result of one Check pass (launcher start or Refresh list): the effective catalog,
 /// whether GitHub throttled the request, the cached list's age when a fetch could not be made, and
@@ -193,7 +197,8 @@ internal sealed class LauncherPluginComposition : IDisposable
                 if (check.Available)
                 {
                     updatesAvailable[info.Id] = new PluginUpdateAvailability(
-                        check.Version!, check.CompatibilityNote, check.CompatibilityIsWarning);
+                        check.Version!, check.CompatibilityNote, check.CompatibilityIsWarning,
+                        check.Capabilities);
                 }
                 else if (check.WithheldReason is { } reason)
                 {
@@ -280,30 +285,31 @@ internal sealed class LauncherPluginComposition : IDisposable
 
         if (catalog?.IsBlocked(record.Id, remoteVersion) == true)
         {
-            return new PluginUpdateCheck(false, "the plugin is blocked", null, null, false);
+            return new PluginUpdateCheck(false, "the plugin is blocked", null, null, false, []);
         }
 
         if (manifest.CapabilitiesVersion > LauncherPluginCapabilityVocabulary.Current)
         {
-            return new PluginUpdateCheck(false, "needs a newer launcher", null, null, false);
+            return new PluginUpdateCheck(false, "needs a newer launcher", null, null, false, []);
         }
 
         // Under a vocabulary this launcher does claim to know, an unrecognized name is a manifest
         // the install will refuse, so offering the update would only fail later.
         if (manifest.UnrecognizedCapabilities.Count > 0)
         {
-            return new PluginUpdateCheck(false, "the update's manifest is not valid", null, null, false);
+            return new PluginUpdateCheck(false, "the update's manifest is not valid", null, null, false, []);
         }
 
         string? versionReason = VersionOnlyCompatibility(manifest, clientResolution?.Version);
         if (versionReason is not null)
         {
-            return new PluginUpdateCheck(false, versionReason, null, null, false);
+            return new PluginUpdateCheck(false, versionReason, null, null, false, []);
         }
 
         LauncherPluginCompatibility.CompatibilityDescription compatibility =
             LauncherPluginCompatibility.Describe(manifest, clientResolution?.Version);
-        return new PluginUpdateCheck(true, null, manifest.Version, compatibility.Text, compatibility.IsWarning);
+        return new PluginUpdateCheck(
+            true, null, manifest.Version, compatibility.Text, compatibility.IsWarning, manifest.Capabilities);
     }
 
     /// <summary>Host-independent compatibility (min/max/skip host version only): the launch-mode
@@ -318,9 +324,14 @@ internal sealed class LauncherPluginComposition : IDisposable
     }
 
     private readonly record struct PluginUpdateCheck(
-        bool Available, string? WithheldReason, string? Version, string? CompatibilityNote, bool CompatibilityIsWarning)
+        bool Available,
+        string? WithheldReason,
+        string? Version,
+        string? CompatibilityNote,
+        bool CompatibilityIsWarning,
+        IReadOnlyList<LauncherPluginCapabilityDeclaration> Capabilities)
     {
-        public static readonly PluginUpdateCheck None = new(false, null, null, null, false);
+        public static readonly PluginUpdateCheck None = new(false, null, null, null, false, []);
     }
 
     private void WriteCache(byte[] content)

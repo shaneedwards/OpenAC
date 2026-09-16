@@ -20,6 +20,7 @@ public sealed class PluginDiscoverRowViewModel(
     private string? _latestVersion;
     private string? _compatibility;
     private bool _compatibilityIsWarning;
+    private IReadOnlyList<LauncherPluginCapabilityDeclaration> _capabilities = [];
 
     public string Id { get; } = id;
     public string Name { get; } = name;
@@ -78,6 +79,30 @@ public sealed class PluginDiscoverRowViewModel(
 
     public bool ShowCompatibilityWarning => HasCompatibilityNote && CompatibilityIsWarning;
     public bool ShowCompatibilityMuted => HasCompatibilityNote && !CompatibilityIsWarning;
+
+    /// <summary>Filled in alongside <see cref="Compatibility"/>: a count only, never the claims
+    /// themselves, since browsing is not a consent surface.</summary>
+    public IReadOnlyList<LauncherPluginCapabilityDeclaration> Capabilities
+    {
+        get => _capabilities;
+        set
+        {
+            if (SetProperty(ref _capabilities, value))
+            {
+                OnPropertyChanged(nameof(HasCapabilities));
+                OnPropertyChanged(nameof(CapabilityCountText));
+            }
+        }
+    }
+
+    public bool HasCapabilities => Capabilities.Count > 0;
+
+    public string CapabilityCountText => Capabilities.Count switch
+    {
+        0 => string.Empty,
+        1 => "Uses 1 capability",
+        var count => $"Uses {count} capabilities",
+    };
 }
 
 /// <summary>One installed plugin, shown on the Installed list.</summary>
@@ -99,7 +124,8 @@ public sealed class PluginInstalledRowViewModel(
     RelayCommand? updateCommand,
     RelayCommand? removeCommand,
     string? refusal,
-    bool hasDuplicate)
+    bool hasDuplicate,
+    IReadOnlyList<LauncherPluginCapabilityDeclaration> capabilities)
     : ObservableObject
 {
     public string Id { get; } = id;
@@ -139,6 +165,14 @@ public sealed class PluginInstalledRowViewModel(
     public string RemoveAutomationName { get; } = $"Remove {displayName}";
     public RelayCommand? UpdateCommand { get; } = updateCommand;
     public RelayCommand? RemoveCommand { get; } = removeCommand;
+    public IReadOnlyList<LauncherPluginCapabilityDeclaration> Capabilities { get; } = capabilities;
+    public bool HasCapabilities => Capabilities.Count > 0;
+    public string CapabilityCountText => Capabilities.Count switch
+    {
+        0 => string.Empty,
+        1 => "Uses 1 capability",
+        var count => $"Uses {count} capabilities",
+    };
 }
 
 /// <summary>Discover/Installed, Refresh list, Add from URL, and the install and remove dialogs
@@ -471,7 +505,9 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             outcome.UpdatesAvailable.TryGetValue(info.Id, out PluginUpdateAvailability? availability);
             bool updateAvailable = info.Source == InstalledPluginSource.Managed && availability is not null;
             RelayCommand? updateCommand = updateAvailable
-                ? new RelayCommand(() => OpenUpdateDialog(info), () => _canInteract() && !IsBusy)
+                ? new RelayCommand(
+                    () => OpenUpdateDialog(info, availability!.Capabilities),
+                    () => _canInteract() && !IsBusy)
                 : null;
             RelayCommand? removeCommand = canRemove
                 ? new RelayCommand(() => OpenRemoveDialog(info), () => _canInteract() && !IsBusy)
@@ -495,14 +531,16 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                 updateCommand,
                 removeCommand,
                 info.Refusal,
-                info.HasDuplicate));
+                info.HasDuplicate,
+                ReadInstalledCapabilities(info)));
         }
 
         _allDiscover.Clear();
         foreach (PluginDiscoverEntry entry in outcome.Discover)
         {
             var install = new RelayCommand(
-                () => OpenInstallDialog(entry.Repo, entry.Id, entry.Name, isUpdate: false),
+                () => OpenInstallDialog(
+                    entry.Repo, entry.Id, entry.Name, isUpdate: false, DiscoverCapabilities(entry.Id)),
                 () => _canInteract() && !IsBusy);
             var row = new PluginDiscoverRowViewModel(
                 entry.Id, entry.Name, entry.Author, entry.Description, entry.Repo, install);
@@ -511,6 +549,7 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                 row.LatestVersion = cached.LatestVersion;
                 row.Compatibility = cached.Compatibility;
                 row.CompatibilityIsWarning = cached.CompatibilityIsWarning;
+                row.Capabilities = cached.Capabilities;
             }
 
             _allDiscover.Add(row);
@@ -578,18 +617,28 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             LauncherVersion? clientVersion = _clientVersionResolver()?.Version;
             LauncherPluginCompatibility.CompatibilityDescription compatibility =
                 LauncherPluginCompatibility.Describe(manifest, clientVersion);
-            var details = new DiscoverDetails(manifest.Version, compatibility.Text, compatibility.IsWarning);
+            var details = new DiscoverDetails(
+                manifest.Version, compatibility.Text, compatibility.IsWarning, manifest.Capabilities);
             _discoverDetailsCache[row.Id] = details;
             row.LatestVersion = details.LatestVersion;
             row.Compatibility = details.Compatibility;
             row.CompatibilityIsWarning = details.CompatibilityIsWarning;
+            row.Capabilities = details.Capabilities;
         }
     }
 
     private readonly record struct DiscoverDetails(
-        string LatestVersion, string Compatibility, bool CompatibilityIsWarning);
+        string LatestVersion,
+        string Compatibility,
+        bool CompatibilityIsWarning,
+        IReadOnlyList<LauncherPluginCapabilityDeclaration> Capabilities);
 
-    private void OpenInstallDialog(string repo, string pluginId, string displayName, bool isUpdate)
+    private void OpenInstallDialog(
+        string repo,
+        string pluginId,
+        string displayName,
+        bool isUpdate,
+        IReadOnlyList<LauncherPluginCapabilityDeclaration> capabilities)
     {
         if (_composition is null)
         {
@@ -606,16 +655,24 @@ public sealed class LauncherPluginsViewModel : ObservableObject
             isUpdate,
             BuildCharacterOptions(),
             cancellationToken => InstallAsync(repo, cancellationToken),
-            EnableForCharacters);
+            EnableForCharacters,
+            capabilities);
     }
 
-    private void OpenUpdateDialog(InstalledPluginInfo info)
+    private void OpenUpdateDialog(
+        InstalledPluginInfo info, IReadOnlyList<LauncherPluginCapabilityDeclaration> capabilities)
     {
         if (info.Repo is { } repo)
         {
-            OpenInstallDialog(repo, info.Id, info.DisplayName, isUpdate: true);
+            OpenInstallDialog(repo, info.Id, info.DisplayName, isUpdate: true, capabilities);
         }
     }
+
+    /// <summary>The capabilities Discover already fetched for this listed plugin
+    /// (<see cref="RefreshDiscoverDetailsAsync"/>), or none when Install is pressed before that
+    /// finishes: the install itself still re-reads the manifest, so nothing here depends on it.</summary>
+    private IReadOnlyList<LauncherPluginCapabilityDeclaration> DiscoverCapabilities(string pluginId) =>
+        _discoverDetailsCache.TryGetValue(pluginId, out DiscoverDetails cached) ? cached.Capabilities : [];
 
     private async Task<PluginInstallResult> InstallAsync(string repo, CancellationToken cancellationToken)
     {
@@ -721,6 +778,23 @@ public sealed class LauncherPluginsViewModel : ObservableObject
         }
     }
 
+    /// <summary>The installed row's own count, read straight from its <c>plugin.json</c> the way
+    /// <see cref="ReadInstalledHosts"/> does, since <see cref="InstalledPluginInfo"/> does not carry
+    /// it.</summary>
+    private static IReadOnlyList<LauncherPluginCapabilityDeclaration> ReadInstalledCapabilities(
+        InstalledPluginInfo info)
+    {
+        try
+        {
+            return LauncherPluginManifest.Parse(
+                File.ReadAllText(Path.Combine(info.Directory, "plugin.json"))).Capabilities;
+        }
+        catch (Exception ex) when (ex is IOException or LauncherPluginManifestException)
+        {
+            return [];
+        }
+    }
+
     private IReadOnlyList<PluginCharacterOption> BuildCharacterOptions() =>
         [.. _orchestrator.GetSnapshot().Servers
             .SelectMany(server => server.Accounts)
@@ -799,7 +873,8 @@ public sealed class LauncherPluginsViewModel : ObservableObject
                         break;
                     }
 
-                    OpenInstallDialog(repo, manifest.Id, manifest.DisplayName, isUpdate: false);
+                    OpenInstallDialog(
+                        repo, manifest.Id, manifest.DisplayName, isUpdate: false, manifest.Capabilities);
                     break;
                 case PluginReleaseFetchStatus.RateLimited:
                     Error = "GitHub is rate limiting; try later.";
