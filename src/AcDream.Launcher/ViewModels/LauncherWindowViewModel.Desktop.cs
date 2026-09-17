@@ -7,7 +7,9 @@ namespace AcDream.Launcher.ViewModels;
 public sealed partial class LauncherWindowViewModel
 {
     private IServerHealthService? _serverHealth;
+    private static readonly TimeSpan HealthCheckInterval = TimeSpan.FromSeconds(10);
     private DateTimeOffset _nextHealthCheck;
+    private bool _isCheckingServerHealth;
     private readonly CancellationTokenSource _healthCancellation = new();
     private bool _isCharacterOptionsOpen;
     private bool _isSessionLogOpen;
@@ -65,23 +67,34 @@ public sealed partial class LauncherWindowViewModel
         catch (Exception ex) { LastError = SafeDisplayError(ex, secret: null); }
     }
 
-    public void ConfigureServerHealth(IServerHealthService service) => _serverHealth = service;
-
-    public void PollServerHealth()
+    public void ConfigureServerHealth(IServerHealthService service)
     {
-        if (_disposed || _serverHealth is null || DateTimeOffset.UtcNow < _nextHealthCheck) return;
-        _nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(30);
-        CheckServersCommand.Execute(null);
+        _serverHealth = service;
+        CheckServersCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Checks servers on <see cref="HealthCheckInterval"/> while the window is active. An
+    /// inactive window sends nothing, and one that comes back past the interval checks on the next
+    /// poll rather than showing a stale ping.</summary>
+    public void PollServerHealth(bool windowIsActive) => PollServerHealth(windowIsActive, DateTimeOffset.UtcNow);
+
+    internal void PollServerHealth(bool windowIsActive, DateTimeOffset now)
+    {
+        if (!windowIsActive || _disposed || _serverHealth is null || _isCheckingServerHealth || now < _nextHealthCheck) return;
+        _nextHealthCheck = now + HealthCheckInterval;
+        // Not through CheckServersCommand: a background refresh must not disable the button.
+        _ = CheckServerHealthAsync();
     }
 
     private async Task CheckServerHealthAsync()
     {
-        if (_serverHealth is null) return;
+        if (_serverHealth is null || _isCheckingServerHealth) return;
+        _isCheckingServerHealth = true;
         CancellationToken token = _healthCancellation.Token;
-        var servers = _orchestrator.GetSnapshot().Servers.ToArray();
-        using var limit = new SemaphoreSlim(4);
         try
         {
+            var servers = _orchestrator.GetSnapshot().Servers.ToArray();
+            using var limit = new SemaphoreSlim(4);
             await Task.WhenAll(servers.Select(async server =>
             {
                 await limit.WaitAsync(token);
@@ -93,12 +106,13 @@ public sealed partial class LauncherWindowViewModel
                         if (_disposed) return;
                         string count = result.PlayerCount is { } value ? $"{value:N0} players" : "— players";
                         if (result.IsPlayerCountStale) count += " (stale)";
-                        string status = result.IsReachable == true ? "Online" : "Offline · no response";
-                        string latency = result.LatencyMilliseconds is { } ms ? $" · {ms:0} ms" : "";
+                        // The dot beside the server name already says whether it answered.
+                        string status = result.IsReachable == true ? "" : "No response · ";
                         foreach (var row in AllAccountRows.Where(row => row.ServerName == server.Name && row.Endpoint == $"{server.Host}:{server.Port}"))
                         {
                             row.IsServerOnline = result.IsReachable;
-                            row.ServerStatusText = $"{status} · {count}{latency}";
+                            row.ServerStatusText = $"{status}{count}";
+                            row.LatencyMilliseconds = result.LatencyMilliseconds;
                         }
                     });
                 }
@@ -110,7 +124,11 @@ public sealed partial class LauncherWindowViewModel
         {
             if (!_disposed) OperationStatus = "Server status could not be checked. You can still launch.";
         }
-        _nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(30);
+        finally
+        {
+            _isCheckingServerHealth = false;
+            _nextHealthCheck = DateTimeOffset.UtcNow + HealthCheckInterval;
+        }
     }
 
     private void OpenAccountRowOptions(LauncherAccountServerRowViewModel row)
@@ -121,6 +139,10 @@ public sealed partial class LauncherWindowViewModel
             .FirstOrDefault(character => character.CharacterName == row.CharacterName);
         if (SelectedNode is not null)
         {
+            // Reselecting the already-open character's own row leaves SetSelectedNode a no-op, so
+            // the draft needs its own rebuild here to show the saved state on every open, not just
+            // the first.
+            LoadCharacterDraft();
             CharacterLaunchMode = row.Mode;
             IsCharacterOptionsOpen = true;
         }

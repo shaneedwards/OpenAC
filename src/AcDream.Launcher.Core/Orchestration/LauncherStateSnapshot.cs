@@ -18,7 +18,9 @@ public sealed record LauncherAccountSnapshot(
     string AccountName,
     IReadOnlyList<LauncherCharacterSnapshot> Characters,
     bool HasRunningActivity,
-    string ActivityStatus);
+    string ActivityStatus,
+    string? SelectedCharacter = null,
+    LaunchMode? SelectedLaunchMode = null);
 
 public sealed record LauncherServerSnapshot(
     string Name,
@@ -58,7 +60,8 @@ public sealed record LauncherSessionSnapshot(
     string? Error,
     DateTimeOffset CreatedAt,
     string? ExitReason = null,
-    bool ExitedGracefully = false)
+    bool ExitedGracefully = false,
+    string? PluginNotice = null)
 {
     public bool IsActive => State is not (
         LauncherActivityState.Exited
