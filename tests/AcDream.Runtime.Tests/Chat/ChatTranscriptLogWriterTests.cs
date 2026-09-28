@@ -91,6 +91,22 @@ public sealed class ChatTranscriptLogWriterTests : IDisposable
     }
 
     [Fact]
+    public void AHiddenLineStillReachesTheLogFile()
+    {
+        using var log = new ChatSessionLog(_directory);
+        var transcript = new ChatLog();
+        using IDisposable hide = transcript.DisplayFilters.Register(static _ => true);
+        var writer = new ChatTranscriptLogWriter(log);
+
+        log.Open("session", out _);
+        writer.Attach(transcript);
+        transcript.OnLocalSpeech("Dww", "hidden", 0x02u, false, 0u);
+        log.Close();
+
+        Assert.Equal("Dww says, \"hidden\"\n", Read());
+    }
+
+    [Fact]
     public void DetachReleasesTheTranscriptItActuallyAttachedTo()
     {
         using var log = new ChatSessionLog(_directory);

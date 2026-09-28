@@ -177,6 +177,20 @@ public sealed class ChatVMTests
     }
 
     [Fact]
+    public void AHiddenLineDoesNotAdvanceRevisionOrAppearInRecentLinesDetailed()
+    {
+        var log = new ChatLog();
+        using IDisposable hide = log.DisplayFilters.Register(static _ => true);
+        var vm = new ChatVM(log);
+        long revisionBefore = vm.Revision;
+
+        log.OnSystemMessage("hidden", 0u);
+
+        Assert.Equal(revisionBefore, vm.Revision);
+        Assert.Empty(vm.RecentLinesDetailed());
+    }
+
+    [Fact]
     public void RecentLines_ShowsPluginSystemMessage_TaggedDefault()
     {
         var log = new ChatLog();

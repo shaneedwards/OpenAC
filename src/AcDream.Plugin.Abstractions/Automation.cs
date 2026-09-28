@@ -857,7 +857,8 @@ public readonly record struct PluginChatInputDecision
 
 /// <summary>
 /// Reading the client's text, printing into it, dropping lines before they
-/// are shown, and intercepting lines before they are sent.
+/// are shown, hiding lines from the display, and intercepting lines before
+/// they are sent.
 /// </summary>
 public interface IPluginChat
 {
@@ -906,6 +907,21 @@ public interface IPluginChat
     /// line before the language filter censors it; readers see it censored.
     /// </summary>
     IDisposable RegisterFilter(Func<PluginChatMessage, bool> suppress) =>
+        NoOpPluginRegistration.Instance;
+
+    /// <summary>
+    /// Installs a filter consulted before a line is shown. Returning true
+    /// keeps the line off the chat windows and the console, but
+    /// <see cref="Received"/>, <see cref="CaptureMessages"/> and the log file
+    /// still get it, so hiding a line never hides it from another plugin.
+    /// Lines a plugin posts, including its own, are offered too, so a
+    /// filter must not match its own reposts. Filters run in registration
+    /// order, and one that throws hides nothing. Dispose the result to
+    /// remove it; a host that predates this member shows the line.
+    /// </summary>
+    /// <param name="hide">Answers true to keep the line off the display.</param>
+    /// <returns>A handle that removes the filter when disposed.</returns>
+    IDisposable RegisterDisplayFilter(Func<PluginChatMessage, bool> hide) =>
         NoOpPluginRegistration.Instance;
 
     /// <summary>

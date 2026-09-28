@@ -49,6 +49,65 @@ public sealed class ChatCommandTargetStateTests
     }
 
     [Fact]
+    public void AHiddenTellNeitherReplacesNorClearsThePriorIncomingTellTarget()
+    {
+        var chat = new ChatLog();
+        using var targets = new ChatCommandTargetState(chat);
+        using IDisposable hide = chat.DisplayFilters.Register(
+            static candidate => candidate.Text == "hidden");
+
+        chat.OnTellReceived("A", "shown", 0x50000001u, logTextType: 0x03u);
+        chat.OnTellReceived("B", "hidden", 0x50000002u, logTextType: 0x03u);
+
+        Assert.Equal("A", targets.LastIncomingTellSender);
+    }
+
+    [Fact]
+    public void AHiddenTellWithNoPriorTargetLeavesTheTargetNull()
+    {
+        var chat = new ChatLog();
+        using var targets = new ChatCommandTargetState(chat);
+        using IDisposable hide = chat.DisplayFilters.Register(
+            static candidate => candidate.Text == "hidden");
+
+        chat.OnTellReceived("B", "hidden", 0x50000002u, logTextType: 0x03u);
+
+        Assert.Null(targets.LastIncomingTellSender);
+    }
+
+    [Fact]
+    public void AHiddenMonarchOrPatronLineDoesNotReplaceThePriorReplyTarget()
+    {
+        var chat = new ChatLog();
+        using var targets = new ChatCommandTargetState(chat);
+        using IDisposable hide = chat.DisplayFilters.Register(
+            static candidate => candidate.Text == "hidden");
+
+        chat.OnChannelBroadcast(0x4000u, "Monarch", "shown");
+        chat.OnChannelBroadcast(0x4000u, "New Monarch", "hidden");
+        chat.OnChannelBroadcast(0x2000u, "Patron", "shown");
+        chat.OnChannelBroadcast(0x2000u, "New Patron", "hidden");
+
+        Assert.Equal("Monarch", targets.LastMonarchSender);
+        Assert.Equal("Patron", targets.LastPatronSender);
+    }
+
+    [Fact]
+    public void NoteOutgoingTellIsUnaffectedByAHiddenIncomingTell()
+    {
+        var chat = new ChatLog();
+        using var targets = new ChatCommandTargetState(chat);
+        using IDisposable hide = chat.DisplayFilters.Register(
+            static candidate => candidate.Kind == (int)ChatKind.Tell
+                && candidate.SenderObjectId != 0);
+        targets.NoteOutgoingTell("Caith");
+
+        chat.OnTellReceived("Bob", "hidden", 0x50000001u, logTextType: 0x03u);
+
+        Assert.Equal("Caith", targets.LastOutgoingTellTarget);
+    }
+
+    [Fact]
     public void DisposeDetachesAndIsIdempotent()
     {
         var chat = new ChatLog();

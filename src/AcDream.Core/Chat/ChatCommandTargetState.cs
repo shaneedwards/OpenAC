@@ -104,6 +104,9 @@ public sealed class ChatCommandTargetState : IDisposable
 
     private void OnEntryAppended(ChatEntry entry)
     {
+        // A line the player never saw names nobody to answer.
+        if (entry.HiddenFromDisplay)
+            return;
         if (string.IsNullOrEmpty(entry.Sender))
             return;
 

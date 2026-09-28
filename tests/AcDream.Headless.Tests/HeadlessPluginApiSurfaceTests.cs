@@ -79,6 +79,23 @@ public sealed class HeadlessPluginApiSurfaceTests
         Assert.Equal(1, runtime.CommunicationOwner.Chat.Count);
     }
 
+    [Fact]
+    public void AHiddenLineStillReachesTheEventButNotTheTranscript()
+    {
+        using GameRuntime runtime = NewRuntime();
+        using var host = NewHost(runtime);
+        var seen = new List<string>();
+        host.Automation.Chat.Received += message => seen.Add(message.Text);
+        using IDisposable hide = host.Automation.Chat.RegisterDisplayFilter(
+            static candidate => candidate.Text == "hide me");
+
+        runtime.CommunicationOwner.Chat.OnSystemMessage("hide me", 0u);
+        runtime.CommunicationOwner.Chat.OnSystemMessage("keep me", 0u);
+
+        Assert.Equal(["hide me", "keep me"], seen);
+        Assert.Equal(1, runtime.CommunicationOwner.Chat.Count);
+    }
+
     /// <summary>
     /// The windowless client's plugin host, and the bus its session host
     /// hangs off it: an interceptor a plugin registers through the host is

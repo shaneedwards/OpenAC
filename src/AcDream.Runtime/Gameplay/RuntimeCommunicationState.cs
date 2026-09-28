@@ -183,18 +183,20 @@ public sealed class RuntimeCommunicationState : IDisposable
         {
             // A status notice never enters the log, so it would otherwise
             // escape the filters entirely. Offer it under its own kind.
-            if (Chat.Filters.ShouldSuppress(new PluginChatMessage(
-                    0UL,
-                    0u,
-                    PluginChatMessage.StatusTextKind,
-                    string.Empty,
-                    text,
-                    string.Empty)
-                {
-                    LogTextType = (int)type,
-                    Received = DateTimeOffset.UtcNow,
-                    DisplayText = text,
-                }))
+            var candidate = new PluginChatMessage(
+                0UL,
+                0u,
+                PluginChatMessage.StatusTextKind,
+                string.Empty,
+                text,
+                string.Empty)
+            {
+                LogTextType = (int)type,
+                Received = DateTimeOffset.UtcNow,
+                DisplayText = text,
+            };
+            if (Chat.Filters.ShouldSuppress(candidate)
+                || Chat.DisplayFilters.ShouldSuppress(candidate))
             {
                 return;
             }

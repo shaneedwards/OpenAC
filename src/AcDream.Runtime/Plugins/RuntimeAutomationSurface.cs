@@ -150,12 +150,15 @@ internal sealed class RuntimeAutomationSurface
     /// the log so they survive a session being replaced.
     /// </summary>
     private readonly ChatSuppressionFilters _chatFilters = new();
+    /// <summary>Display filters installed by plugins, kept like the filters above.</summary>
+    private readonly ChatSuppressionFilters _chatDisplayFilters = new();
     /// <summary>
     /// Interceptors installed by plugins over the lines the player types. On
     /// the surface for the same reason as the filters: they outlive a session.
     /// </summary>
     private readonly ChatInputInterceptors _chatInterceptors = new();
     private IDisposable? _chatFilterInstallation;
+    private IDisposable? _chatDisplayFilterInstallation;
     private IDisposable? _runtimeEventSubscription;
     private bool _wasInWorld;
     private Func<uint, bool, bool>? _answerConfirmation;
@@ -1063,6 +1066,8 @@ internal sealed class RuntimeAutomationSurface
                 runtime.CommunicationOwner.Events.Subscribe(this);
             _chatFilterInstallation = runtime.CommunicationOwner.Chat.Filters
                 .Register(candidate => _chatFilters.ShouldSuppress(candidate));
+            _chatDisplayFilterInstallation = runtime.CommunicationOwner.Chat.DisplayFilters
+                .Register(candidate => _chatDisplayFilters.ShouldSuppress(candidate));
             _runtimeEventSubscription = runtime.Subscribe(this);
             _wasInWorld =
                 runtime.Lifecycle.State == RuntimeLifecycleState.InWorld;
@@ -1350,6 +1355,8 @@ internal sealed class RuntimeAutomationSurface
         _communicationSubscription = null;
         _chatFilterInstallation?.Dispose();
         _chatFilterInstallation = null;
+        _chatDisplayFilterInstallation?.Dispose();
+        _chatDisplayFilterInstallation = null;
         _runtimeEventSubscription?.Dispose();
         _runtimeEventSubscription = null;
         _wasInWorld = false;
@@ -2868,6 +2875,12 @@ internal sealed class RuntimeAutomationSurface
     {
         ArgumentNullException.ThrowIfNull(suppress);
         return _chatFilters.Register(suppress);
+    }
+
+    public IDisposable RegisterDisplayFilter(Func<PluginChatMessage, bool> hide)
+    {
+        ArgumentNullException.ThrowIfNull(hide);
+        return _chatDisplayFilters.Register(hide);
     }
 
     public IDisposable RegisterInputInterceptor(

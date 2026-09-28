@@ -61,7 +61,7 @@ public sealed class RuntimeChatFeed : IDisposable
     public event Action<RuntimeChatLine>? LineAppended;
 
     /// <summary>
-    /// Advances on every appended line. A reader that caches a laid-out
+    /// Advances on every shown line. A reader that caches a laid-out
     /// transcript can hold on to it while this is unchanged.
     /// </summary>
     public long Revision => _log.Revision;
@@ -149,6 +149,10 @@ public sealed class RuntimeChatFeed : IDisposable
 
     private void OnEntryAppended(ChatEntry entry)
     {
+        // A hidden line never reaches a chat window, so it never reaches
+        // the console front end reading this feed either.
+        if (entry.HiddenFromDisplay)
+            return;
         if (LineAppended is not { } handler)
             return;
         handler(BuildLine(entry));

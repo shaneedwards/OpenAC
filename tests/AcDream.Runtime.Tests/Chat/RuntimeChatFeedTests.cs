@@ -158,6 +158,21 @@ public sealed class RuntimeChatFeedTests
     }
 
     [Fact]
+    public void AHiddenLineIsNeitherSnapshottedNorPushed()
+    {
+        var log = new ChatLog();
+        using IDisposable hide = log.DisplayFilters.Register(static _ => true);
+        using var feed = new RuntimeChatFeed(log);
+        var pushed = new List<RuntimeChatLine>();
+        feed.LineAppended += pushed.Add;
+
+        log.OnSystemMessage("hidden", chatType: 0u);
+
+        Assert.Empty(feed.Snapshot());
+        Assert.Empty(pushed);
+    }
+
+    [Fact]
     public void ADisposedFeedStopsPushing()
     {
         var log = new ChatLog();

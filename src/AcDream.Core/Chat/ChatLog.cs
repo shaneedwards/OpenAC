@@ -33,7 +33,7 @@ public sealed class ChatLog
     /// table failed to load, empty when it loaded with none.</summary>
     public IReadOnlyList<string>? FilterLanguagePatterns { get; set; }
 
-    /// <summary>Fires every time a new entry is appended.</summary>
+    /// <summary>Fires every time a new entry is appended, hidden or not.</summary>
     public event Action<ChatEntry>? EntryAppended;
 
     public ChatEntry[] Snapshot() => _buffer.ToArray();
@@ -246,6 +246,10 @@ public sealed class ChatLog
     /// </summary>
     public ChatSuppressionFilters Filters { get; } = new();
 
+    /// <summary>Predicates that keep a line off the display; everything downstream
+    /// of the log still gets it.</summary>
+    public ChatSuppressionFilters DisplayFilters { get; } = new();
+
     /// <summary>
     /// Projects an entry into the shape filters are written against. The
     /// sequence is zero: the entry has not been appended yet, so it has none.
@@ -277,19 +281,30 @@ public sealed class ChatLog
         // then is it censored and kept. That is the order the original client
         // uses with its own plugin host, so a filter matches the real words
         // while every reader gets the line as printed.
-        if (Filters.ShouldSuppress(ToFilterCandidate(in entry)))
+        var candidate = ToFilterCandidate(in entry);
+        if (Filters.ShouldSuppress(candidate))
             return;
+        // A display filter drops the line from the buffer only: every reader
+        // downstream of EntryAppended still gets it.
+        bool hidden = DisplayFilters.ShouldSuppress(candidate);
         if (FilterLanguageSource?.Invoke() == true)
             entry = entry with { Text = ChatLanguageFilter.Censor(entry.Text, FilterLanguagePatterns) };
 
         // Stamp every entry with an identity that is never reused, so anything holding on to
         // one line (a text selection, say) can still find it after older entries are dropped
         // and every remaining entry's position in the buffer has shifted.
-        entry = entry with { Sequence = Interlocked.Increment(ref _sequence) };
-        _buffer.Enqueue(entry);
-        while (_buffer.Count > _maxEntries)
-            _buffer.TryDequeue(out _);
-        Interlocked.Increment(ref _revision);
+        entry = entry with
+        {
+            Sequence = Interlocked.Increment(ref _sequence),
+            HiddenFromDisplay = hidden,
+        };
+        if (!hidden)
+        {
+            _buffer.Enqueue(entry);
+            while (_buffer.Count > _maxEntries)
+                _buffer.TryDequeue(out _);
+            Interlocked.Increment(ref _revision);
+        }
         EntryAppended?.Invoke(entry);
     }
 
@@ -347,4 +362,7 @@ public readonly record struct ChatEntry(
     /// was never appended; the log assigns it as the entry goes in.
     /// </summary>
     public long Sequence { get; init; }
+
+    /// <summary>Kept off the display; still passed to <see cref="ChatLog.EntryAppended"/>.</summary>
+    public bool HiddenFromDisplay { get; init; }
 }
