@@ -3281,7 +3281,8 @@ public sealed class RetailUiRuntime : IDisposable
         DatReaderWriter.DBObjs.ExperienceTable? experienceTable;
         lock (_bindings.Assets.DatLock)
         {
-            experienceTable = Layout.CharacterSheetProvider.LoadExperienceTable(_bindings.Assets.Dats);
+            experienceTable = AcDream.Content.Skills.ExperienceCost.LoadTable(
+                _bindings.Assets.Dats);
         }
 
         var callbacks = new Layout.SocialPanelController.Callbacks(

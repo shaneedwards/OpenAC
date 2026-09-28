@@ -36,6 +36,16 @@ public sealed class PluginApiInertDefaultTests
     }
 
     [Fact]
+    public void ExperienceBudgetAndRaiseCostsReadAsUnavailableByDefault()
+    {
+        ICharacterInfo character = new MinimalCharacter();
+        Assert.Equal(0UL, character.UnassignedExperience);
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, 1u, 1u, out ulong cost));
+        Assert.Equal(0UL, cost);
+    }
+
+    [Fact]
     public void TitlesReadAsNoneByDefault()
     {
         ICharacterInfo character = new MinimalCharacter();

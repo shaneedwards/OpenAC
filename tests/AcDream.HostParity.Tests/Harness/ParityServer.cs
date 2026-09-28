@@ -266,7 +266,12 @@ internal sealed class ParityServer(WorldSession session, Func<uint> playerGuid)
     /// <param name="skillId">Which skill; 24 is run and 22 is jump.</param>
     /// <param name="ranks">How much of it the character has trained.</param>
     /// <param name="xp">The experience banked into it towards those ranks.</param>
-    internal void SkillUpdate(uint skillId, uint ranks, uint xp = 0u) =>
+    /// <param name="advancementClass">
+    /// 1 untrained, 2 trained (the default, which is what a raised skill is),
+    /// 3 specialized.
+    /// </param>
+    internal void SkillUpdate(
+        uint skillId, uint ranks, uint xp = 0u, uint advancementClass = 2u) =>
         Raise(
             nameof(WorldSession.SkillUpdated),
             new PrivateUpdateSkill.Parsed(
@@ -274,8 +279,7 @@ internal sealed class ParityServer(WorldSession session, Func<uint> playerGuid)
                 SkillId: skillId,
                 Ranks: ranks,
                 AdjustPP: 0,
-                // Trained, which is what a raised skill is.
-                AdvancementClass: 2u,
+                AdvancementClass: advancementClass,
                 Xp: xp,
                 Init: 0u,
                 Resistance: 0u,
@@ -302,6 +306,17 @@ internal sealed class ParityServer(WorldSession session, Func<uint> playerGuid)
                 Ranks: ranks,
                 Start: start,
                 Xp: xp));
+
+    /// <summary>
+    /// The server states one Int64 property on the character directly, the
+    /// way unassigned experience arrives outside PlayerDescription.
+    /// </summary>
+    /// <param name="property">The property id; 2 is unassigned experience.</param>
+    /// <param name="value">The new value.</param>
+    internal void Int64PropertyUpdate(uint property, long value) =>
+        Raise(
+            nameof(WorldSession.PlayerInt64PropertyUpdated),
+            new WorldSession.PlayerInt64PropertyUpdate(property, value));
 
     /// <summary>
     /// The server states one of the character's vitals in full: how much of
