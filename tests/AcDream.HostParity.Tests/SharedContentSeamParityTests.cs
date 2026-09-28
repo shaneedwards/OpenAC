@@ -49,6 +49,8 @@ public sealed class SharedContentSeamParityTests
         Assert.Contains("BindSpeciesNameResolver", windowless);
         Assert.Contains("BindTitleNameResolver", windowed);
         Assert.Contains("BindTitleNameResolver", windowless);
+        Assert.Contains("BindExperienceTable", windowed);
+        Assert.Contains("BindExperienceTable", windowless);
 
         string[] unexplained = windowed.Except(windowless)
             .Where(static seam => !IsAllowListed(seam, ParityHost.Windowless))

@@ -284,16 +284,35 @@ kind, which is why it is safe to hold on to.
 and `Vitals` is empty until then, so check `IsInWorld` first and treat a zero
 as "not said yet" rather than "never raised".
 
+`UnassignedExperience` is what raises are spent from. `TryGetAdvancementCost`
+prices raising a stat by `ranks` ranks, off the installed experience table:
+
+```csharp
+if (character.TryGetAdvancementCost(
+    PluginAdvancementKind.Skill, skill.SkillId, ranks: 1, out ulong cost))
+{
+    // cost is what RequestAdvancement would take for the next rank.
+}
+```
+
+It answers false rather than clamping past the top of the table, for an
+untrained skill, and for `PluginAdvancementKind.TrainSkill`, which spends
+skill credits rather than experience.
+
 ### Spending on a stat
 
 ```csharp
-PluginAdvancementResult result = character.RequestAdvancement(
-    PluginAdvancementKind.Skill,
-    skill.SkillId,
-    costOfTheNextRank);
+if (character.TryGetAdvancementCost(
+    PluginAdvancementKind.Skill, skill.SkillId, ranks: 1, out ulong cost))
+{
+    PluginAdvancementResult result = character.RequestAdvancement(
+        PluginAdvancementKind.Skill,
+        skill.SkillId,
+        cost);
 
-if (!result.Accepted)
-    host.Log.Warn($"{result.Status}: {result.Notice}");
+    if (!result.Accepted)
+        host.Log.Warn($"{result.Status}: {result.Notice}");
+}
 ```
 
 The stat id is the one the record you read it from carries:
@@ -1991,6 +2010,9 @@ with a window does the work:
   session knows no spells and casts nothing by name.
 - Skill names and skill icons come from the skill table: without it a plugin
   sees the character's skills unnamed.
+- Raise costs come from the installed experience table, so without the files
+  `TryGetAdvancementCost` answers false; `UnassignedExperience` comes off a
+  character property and is real either way.
 - The species a creature belongs to, and the colours a character was made
   with, come from the same files.
 - `State.Contracts` is answered either way, and the character's contracts,

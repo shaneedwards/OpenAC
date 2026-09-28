@@ -295,7 +295,7 @@ internal sealed class LiveSessionRuntimeFactory
         {
             _ui.CharacterSheet.SkillTable = skillTable;
             _ui.CharacterSheet.ExperienceTable =
-                CharacterSheetProvider.LoadExperienceTable(_world.Dats, _log);
+                ExperienceCost.LoadTable(_world.Dats, _log);
         }
 
         var route = new LiveSessionEventRouter(

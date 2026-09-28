@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using AcDream.Content.Skills;
 using AcDream.Core.Net.Messages;
 using AcDream.Plugin.Abstractions;
 using AcDream.Runtime.Gameplay;
@@ -271,6 +272,203 @@ public sealed class RuntimeAutomationSurfaceAdvancementTests
             PluginAdvancementStatus.Unavailable,
             character.RequestAdvancement(
                 PluginAdvancementKind.Skill, KnownSkill, 10UL).Status);
+        Assert.Equal(0UL, character.UnassignedExperience);
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, 1u, 1u, out ulong cost));
+        Assert.Equal(0UL, cost);
+    }
+
+    /// <summary>A negative unassigned experience value reads as none rather than wrapping.</summary>
+    [Fact]
+    public void UnassignedExperienceReadsThePropertyFromPlayerDescriptionAndFromALiveUpdate()
+    {
+        using Fixture fixture = Fixture.InWorld();
+        ICharacterInfo character = fixture.Surface;
+
+        var properties = new AcDream.Core.Items.PropertyBundle();
+        properties.Int64s[(uint)AcDream.Core.Properties.PropertyInt64.AvailableExperience] = 500L;
+        fixture.Player.OnProperties(properties);
+        Assert.Equal(500UL, character.UnassignedExperience);
+
+        fixture.Player.OnInt64PropertyUpdate(
+            (uint)AcDream.Core.Properties.PropertyInt64.AvailableExperience, 750L);
+        Assert.Equal(750UL, character.UnassignedExperience);
+
+        fixture.Player.OnInt64PropertyUpdate(
+            (uint)AcDream.Core.Properties.PropertyInt64.AvailableExperience, -5L);
+        Assert.Equal(0UL, character.UnassignedExperience);
+    }
+
+    /// <summary>The same curve arrays <c>CharacterSheetProviderTests</c> prices its raise buttons from.</summary>
+    private static DatReaderWriter.DBObjs.ExperienceTable MakeExperienceTable() => new()
+    {
+        Attributes = [0, 10, 30, 60, 100],
+        Vitals = [0, 4, 12, 24],
+        TrainedSkills = [0, 5, 15, 30],
+        SpecializedSkills = [0, 8, 24, 48],
+    };
+
+    [Fact]
+    public void TheAttributeRaiseCostMatchesTheCharacterSheetsFixtureNumbers()
+    {
+        using var surface = new RuntimeAutomationSurface();
+        using GameRuntime runtime = GameRuntimeTestFactory.Create();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+        surface.BindExperienceTable(MakeExperienceTable);
+        runtime.CharacterOwner.LocalPlayer.OnAttributeUpdate(
+            atType: 1u, ranks: 1u, start: 10u, xp: 10u);
+        ICharacterInfo character = surface;
+
+        Assert.True(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, statId: 1u, ranks: 1u, out ulong cost));
+        Assert.Equal(20UL, cost);
+    }
+
+    /// <summary>Asking for ten ranks reaches <see cref="ExperienceCost.ToRaise"/> rather than pricing one.</summary>
+    [Fact]
+    public void TheCostToGoSeveralRanksReachesTheExperienceCurve()
+    {
+        uint[] longCurve = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110];
+        using var surface = new RuntimeAutomationSurface();
+        using GameRuntime runtime = GameRuntimeTestFactory.Create();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+        surface.BindExperienceTable(
+            () => new DatReaderWriter.DBObjs.ExperienceTable { Attributes = longCurve });
+        runtime.CharacterOwner.LocalPlayer.OnAttributeUpdate(
+            atType: 1u, ranks: 1u, start: 10u, xp: 10u);
+        ICharacterInfo character = surface;
+
+        Assert.True(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, statId: 1u, ranks: 10u, out ulong cost10));
+        Assert.Equal(
+            (ulong)ExperienceCost.ToRaise(longCurve, ranks: 1u, spentXp: 10u, amount: 10),
+            cost10);
+        Assert.Equal(100UL, cost10);
+    }
+
+    [Fact]
+    public void TheVitalRaiseCostComesFromTheInstalledExperienceTable()
+    {
+        using var surface = new RuntimeAutomationSurface();
+        using GameRuntime runtime = GameRuntimeTestFactory.Create();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+        surface.BindExperienceTable(MakeExperienceTable);
+        runtime.CharacterOwner.LocalPlayer.OnVitalUpdate(
+            1u, ranks: 1u, start: 20u, xp: 0u, current: 20u);
+        ICharacterInfo character = surface;
+
+        Assert.True(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Vital, statId: 1u, ranks: 1u, out ulong cost));
+        Assert.Equal(12UL, cost);
+    }
+
+    [Fact]
+    public void TheSkillRaiseCostUsesTheTrainedOrSpecializedCurveByStatus()
+    {
+        const uint SpecializedSkill = 33u;
+        using var surface = new RuntimeAutomationSurface();
+        using GameRuntime runtime = GameRuntimeTestFactory.Create();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+        surface.BindExperienceTable(MakeExperienceTable);
+        runtime.CharacterOwner.LocalPlayer.OnSkillWireUpdate(
+            KnownSkill, ranks: 1u, status: 2u, xp: 5u, init: 0u, resistance: 0u, lastUsed: 0d);
+        runtime.CharacterOwner.LocalPlayer.OnSkillWireUpdate(
+            SpecializedSkill, ranks: 1u, status: 3u, xp: 8u, init: 0u, resistance: 0u, lastUsed: 0d);
+        ICharacterInfo character = surface;
+
+        Assert.True(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Skill, KnownSkill, 1u, out ulong trainedCost));
+        Assert.Equal(10UL, trainedCost);
+
+        Assert.True(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Skill, SpecializedSkill, 1u, out ulong specializedCost));
+        Assert.Equal(16UL, specializedCost);
+    }
+
+    /// <summary>A request past the top of the table is refused rather than clamped.</summary>
+    [Fact]
+    public void TheCostIsFalseAtOrPastTheTopOfTheTableRatherThanClamped()
+    {
+        using var surface = new RuntimeAutomationSurface();
+        using GameRuntime runtime = GameRuntimeTestFactory.Create();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+        surface.BindExperienceTable(MakeExperienceTable);
+        // Attributes has 5 entries, so index 4 is the top.
+        runtime.CharacterOwner.LocalPlayer.OnAttributeUpdate(
+            atType: 1u, ranks: 4u, start: 100u, xp: 100u);
+        runtime.CharacterOwner.LocalPlayer.OnAttributeUpdate(
+            atType: 2u, ranks: 3u, start: 100u, xp: 60u);
+        ICharacterInfo character = surface;
+
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, 1u, 1u, out ulong atTop));
+        Assert.Equal(0UL, atTop);
+
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, 2u, 2u, out ulong pastTop));
+        Assert.Equal(0UL, pastTop);
+    }
+
+    [Fact]
+    public void TheCostIsFalseForAnUntrainedSkillAnUnknownStatTrainSkillZeroRanksAndUnbuyableVitalIds()
+    {
+        using var surface = new RuntimeAutomationSurface();
+        using GameRuntime runtime = GameRuntimeTestFactory.Create();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+        surface.BindExperienceTable(MakeExperienceTable);
+        runtime.CharacterOwner.LocalPlayer.OnSkillWireUpdate(
+            KnownSkill, ranks: 0u, status: 1u, xp: 0u, init: 0u, resistance: 0u, lastUsed: 0d);
+        runtime.CharacterOwner.LocalPlayer.OnAttributeUpdate(
+            atType: 1u, ranks: 1u, start: 10u, xp: 10u);
+        ICharacterInfo character = surface;
+
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Skill, KnownSkill, 1u, out ulong untrained));
+        Assert.Equal(0UL, untrained);
+
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, 7u, 1u, out ulong unknownStat));
+        Assert.Equal(0UL, unknownStat);
+
+        // Trained, so a Skill raise would be priced; TrainSkill still is not.
+        runtime.CharacterOwner.LocalPlayer.OnSkillWireUpdate(
+            KnownSkill, ranks: 0u, status: 2u, xp: 0u, init: 0u, resistance: 0u, lastUsed: 0d);
+        Assert.True(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Skill, KnownSkill, 1u, out _));
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.TrainSkill, KnownSkill, 1u, out ulong trainSkillCost));
+        Assert.Equal(0UL, trainSkillCost);
+
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, 1u, 0u, out ulong zeroRanks));
+        Assert.Equal(0UL, zeroRanks);
+
+        foreach (uint vitalId in (uint[])[2u, 4u, 6u])
+        {
+            Assert.False(character.TryGetAdvancementCost(
+                PluginAdvancementKind.Vital, vitalId, 1u, out ulong vitalCost));
+            Assert.Equal(0UL, vitalCost);
+        }
+    }
+
+    /// <summary>The unassigned experience budget needs no table: it is a property, not a curve.</summary>
+    [Fact]
+    public void TheCostIsFalseWithoutAnInstalledExperienceTableButTheBudgetIsStillReal()
+    {
+        using var surface = new RuntimeAutomationSurface();
+        using GameRuntime runtime = GameRuntimeTestFactory.Create();
+        surface.Bind(runtime, runtime.CharacterOwner, runtime.ActionOwner.SpellCast);
+        runtime.CharacterOwner.LocalPlayer.OnAttributeUpdate(
+            atType: 1u, ranks: 1u, start: 10u, xp: 10u);
+        var properties = new AcDream.Core.Items.PropertyBundle();
+        properties.Int64s[(uint)AcDream.Core.Properties.PropertyInt64.AvailableExperience] = 42L;
+        runtime.CharacterOwner.LocalPlayer.OnProperties(properties);
+        ICharacterInfo character = surface;
+
+        Assert.False(character.TryGetAdvancementCost(
+            PluginAdvancementKind.Attribute, 1u, 1u, out ulong cost));
+        Assert.Equal(0UL, cost);
+        Assert.Equal(42UL, character.UnassignedExperience);
     }
 
     /// <summary>
@@ -295,6 +493,9 @@ public sealed class RuntimeAutomationSurfaceAdvancementTests
         internal RuntimeAutomationSurface Surface { get; }
 
         internal RecordingCommands Commands { get; }
+
+        internal AcDream.Core.Player.LocalPlayerState Player =>
+            _host.Runtime.CharacterOwner.LocalPlayer;
 
         internal static Fixture InWorld()
         {
