@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Sockets;
 using AcDream.Plugin.Abstractions;
 using AcDream.Runtime.Plugins;
 
@@ -18,6 +19,8 @@ internal sealed class ParityPeerHub : IDisposable
         Arm = arm;
         Endpoint = PeerHubEndpoint.ForDirectory(arm.PeerDirectory);
         _server = Task.Run(() => new PeerHubServer(Endpoint).RunAsync(_lifetime.Token));
+        try { WaitUntilListening(); }
+        catch { _lifetime.Cancel(); throw; }
         Active[arm.PeerDirectory] = this;
         _subscription = arm.Host.Automation.Network.Subscribe(
             PluginPeerCapabilities.ClientState | PluginPeerCapabilities.Casts | PluginPeerCapabilities.Commands)!;
@@ -25,6 +28,31 @@ internal sealed class ParityPeerHub : IDisposable
         arm.Advance();
     }
     internal static ParityPeerHub Find(string directory) => Active[directory];
+
+    // A Unix socket connect fails at once until the hub listens, where a named pipe connect waits.
+    private void WaitUntilListening()
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            if (_server.IsCompleted)
+            {
+                _server.GetAwaiter().GetResult();
+                throw new InvalidOperationException("The parity peer hub stopped before it listened.");
+            }
+            try
+            {
+                Endpoint.ConnectAsync(CancellationToken.None).GetAwaiter().GetResult().Dispose();
+                return;
+            }
+            catch (Exception e) when (e is IOException or SocketException or TimeoutException)
+            {
+                if (DateTime.UtcNow >= deadline)
+                    throw new TimeoutException("The parity peer hub never started listening.", e);
+                Thread.Sleep(2);
+            }
+        }
+    }
     internal void Until(Func<bool> ready)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);

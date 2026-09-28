@@ -70,10 +70,7 @@ internal abstract class ParityArm : IDisposable
         // scratch folder of its own instead, so a scenario can read what this
         // client announced without touching anything the player owns and
         // without the two arms seeing each other.
-        DataDirectory = Path.Combine(
-            Path.GetTempPath(),
-            "acdream-parity",
-            $"{name}-{Guid.NewGuid():N}");
+        DataDirectory = ScratchDirectory(Path.GetTempPath());
         Operations = new ParitySessionOperations();
         Dependencies = buildDependencies(Operations);
         Runtime = new GameRuntime(Dependencies);
@@ -99,6 +96,10 @@ internal abstract class ParityArm : IDisposable
                 true, "127.0.0.1", 9000, "parity", "parity"),
             runtime: Runtime);
     }
+
+    // Short enough that plugin-peers/hub.sock still fits under macOS's tighter Unix socket path limit.
+    internal static string ScratchDirectory(string tempRoot) =>
+        Path.Combine(tempRoot, "acdream-parity", Guid.NewGuid().ToString("N")[..12]);
 
     /// <summary>Which client this is, for failure messages.</summary>
     internal string Name { get; }
