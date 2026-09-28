@@ -483,6 +483,23 @@ public sealed class HeadlessConsoleTests
         Assert.Contains("Unknown command: /x", text);
     }
 
+    [Fact]
+    public void AHiddenLineIsNotPrintedToTheConsole()
+    {
+        var log = new ChatLog();
+        using IDisposable hide = log.DisplayFilters.Register(static _ => true);
+        using var feed = new RuntimeChatFeed(log, new ChatWindowState());
+        var output = new StringWriter();
+        using var renderer = new HeadlessConsoleRenderer(
+            output, useColor: true, chat: feed);
+
+        log.OnLocalSpeech(
+            "Bob", "hidden tell", 0x50000010u, isRanged: false,
+            logTextType: (uint)RetailLogTextType.Speech);
+
+        Assert.Equal(string.Empty, output.ToString());
+    }
+
     /// <summary>
     /// With colour on, a chat line is written in the colour the chat window
     /// shows that kind of line in, from the same table; with colour off it

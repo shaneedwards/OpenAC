@@ -163,9 +163,9 @@ public sealed class ScopedAutomationSurfaceTests
         EventInfo[] events = typeof(IPluginChat)
             .GetEvents(BindingFlags.Public | BindingFlags.Instance);
         Assert.True(
-            methods.Length == 12 && events.Length == 2,
+            methods.Length == 13 && events.Length == 2,
             "IPluginChat should still have exactly the members this test "
-                + "knows about (12 methods incl. event accessors, 2 events) -- "
+                + "knows about (13 methods incl. event accessors, 2 events) -- "
                 + "a member was added or removed without updating this test.");
 
         chat.CaptureMessages(0);
@@ -188,6 +188,9 @@ public sealed class ScopedAutomationSurfaceTests
 
         chat.RegisterFilter(static _ => true);
         Assert.Equal(1, recording.FilterCount);
+
+        chat.RegisterDisplayFilter(static _ => true);
+        Assert.Equal(1, recording.DisplayFilterCount);
 
         chat.RegisterInputInterceptor(static _ => PluginChatInputDecision.Pass);
         Assert.Equal(1, recording.InterceptorCount);
@@ -213,6 +216,7 @@ public sealed class ScopedAutomationSurfaceTests
     private sealed class RecordingIPluginChat : IPluginChat
     {
         private readonly List<Func<PluginChatMessage, bool>> _filters = [];
+        private readonly List<Func<PluginChatMessage, bool>> _displayFilters = [];
         private Action<PluginChatLinkClicked>? _linkClicked;
         private Action<PluginChatMessage>? _received;
 
@@ -264,6 +268,14 @@ public sealed class ScopedAutomationSurfaceTests
             return new Removal(this, suppress);
         }
 
+        internal int DisplayFilterCount => _displayFilters.Count;
+
+        public IDisposable RegisterDisplayFilter(Func<PluginChatMessage, bool> hide)
+        {
+            _displayFilters.Add(hide);
+            return new DisplayRemoval(this, hide);
+        }
+
         internal int InterceptorCount { get; private set; }
 
         public IDisposable RegisterInputInterceptor(
@@ -290,6 +302,13 @@ public sealed class ScopedAutomationSurfaceTests
             Func<PluginChatMessage, bool> suppress) : IDisposable
         {
             public void Dispose() => owner._filters.Remove(suppress);
+        }
+
+        private sealed class DisplayRemoval(
+            RecordingIPluginChat owner,
+            Func<PluginChatMessage, bool> hide) : IDisposable
+        {
+            public void Dispose() => owner._displayFilters.Remove(hide);
         }
     }
 

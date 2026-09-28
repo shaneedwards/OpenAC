@@ -25,6 +25,22 @@ public sealed class ScopedPluginChatTests
     }
 
     [Fact]
+    public void UnloadingAPluginRemovesEveryDisplayFilterItLeft()
+    {
+        var chat = new RecordingChat();
+        var inner = new StubHost(chat);
+        var scoped = new ScopedPluginHost(inner, "example.plugin", "Example");
+
+        scoped.Automation.Chat.RegisterDisplayFilter(static _ => true);
+        scoped.Automation.Chat.RegisterDisplayFilter(static _ => false);
+        Assert.Equal(2, chat.DisplayFilterCount);
+
+        scoped.Dispose();
+
+        Assert.Equal(0, chat.DisplayFilterCount);
+    }
+
+    [Fact]
     public void SubscribingAfterUnloadThrowsWithoutEverTouchingTheHostsChat()
     {
         var chat = new RecordingChat();
@@ -218,10 +234,12 @@ public sealed class ScopedPluginChatTests
     private sealed class RecordingChat : IPluginChat
     {
         private readonly List<Func<PluginChatMessage, bool>> _filters = [];
+        private readonly List<Func<PluginChatMessage, bool>> _displayFilters = [];
         private readonly List<Func<string, PluginChatInputDecision>> _interceptors = [];
         private Action<PluginChatMessage>? _received;
 
         internal int FilterCount => _filters.Count;
+        internal int DisplayFilterCount => _displayFilters.Count;
         internal int InterceptorCount => _interceptors.Count;
 
         public IDisposable RegisterInputInterceptor(
@@ -252,6 +270,12 @@ public sealed class ScopedPluginChatTests
             return new Removal(this, suppress);
         }
 
+        public IDisposable RegisterDisplayFilter(Func<PluginChatMessage, bool> hide)
+        {
+            _displayFilters.Add(hide);
+            return new DisplayRemoval(this, hide);
+        }
+
         public void PostSystemMessage(string text)
         {
         }
@@ -261,6 +285,13 @@ public sealed class ScopedPluginChatTests
             Func<PluginChatMessage, bool> suppress) : IDisposable
         {
             public void Dispose() => owner._filters.Remove(suppress);
+        }
+
+        private sealed class DisplayRemoval(
+            RecordingChat owner,
+            Func<PluginChatMessage, bool> hide) : IDisposable
+        {
+            public void Dispose() => owner._displayFilters.Remove(hide);
         }
     }
 
