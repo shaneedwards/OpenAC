@@ -11,6 +11,7 @@ using AcDream.Core.Spells;
 using AcDream.Core.World;
 using AcDream.Core.CharGen;
 using AcDream.Content;
+using AcDream.Content.Skills;
 using AcDream.Plugin.Abstractions;
 using AcDream.Runtime.Entities;
 using AcDream.Runtime.Gameplay;
@@ -98,6 +99,8 @@ internal sealed class RuntimeAutomationSurface
         new Dictionary<uint, uint>();
     private Func<int, string> _speciesName = static _ => string.Empty;
     private Func<uint, string?> _titleName = static _ => null;
+    private Func<DatReaderWriter.DBObjs.ExperienceTable?> _experienceTable =
+        static () => null;
     private IChargenPaletteColorSource? _paletteColors;
     private Func<uint, uint, bool>? _equip;
     private Func<uint, bool>? _equipSecondary;
@@ -1164,6 +1167,18 @@ internal sealed class RuntimeAutomationSurface
         ArgumentNullException.ThrowIfNull(resolver);
         lock (_gate)
             _titleName = resolver;
+    }
+
+    /// <summary>
+    /// Lends the surface the installed experience table, read from the
+    /// data files. Without it <see cref="TryGetAdvancementCost"/> answers
+    /// false rather than pricing a raise.
+    /// </summary>
+    public void BindExperienceTable(Func<DatReaderWriter.DBObjs.ExperienceTable?> table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        lock (_gate)
+            _experienceTable = table;
     }
 
     public void BindPaletteColorResolver(IChargenPaletteColorSource resolver)
@@ -2270,6 +2285,98 @@ internal sealed class RuntimeAutomationSurface
             Ranks = snapshot.Ranks,
             ExperienceSpent = snapshot.Experience,
         };
+        return true;
+    }
+
+    /// <summary>Read from the property the server banks unspent experience in.</summary>
+    public ulong UnassignedExperience
+    {
+        get
+        {
+            RuntimeCharacterState? character;
+            lock (_gate)
+                character = _character;
+            if (character is null)
+                return 0UL;
+            long value = character.LocalPlayer.Properties.GetInt64(
+                (uint)PropertyInt64.AvailableExperience);
+            return value < 0L ? 0UL : (ulong)value;
+        }
+    }
+
+    /// <summary>
+    /// Prices a raise off the installed experience table bound through
+    /// <see cref="BindExperienceTable"/>, refusing rather than clamping past
+    /// its top.
+    /// </summary>
+    public bool TryGetAdvancementCost(
+        PluginAdvancementKind kind, uint statId, uint ranks, out ulong cost)
+    {
+        cost = 0UL;
+        RuntimeCharacterState? character;
+        Func<DatReaderWriter.DBObjs.ExperienceTable?> experienceTable;
+        lock (_gate)
+        {
+            character = _character;
+            experienceTable = _experienceTable;
+        }
+        DatReaderWriter.DBObjs.ExperienceTable? table = experienceTable();
+        if (character is null || table is null || ranks == 0u)
+            return false;
+
+        uint[]? curve;
+        uint currentRanks;
+        uint spentXp;
+        switch (kind)
+        {
+            case PluginAdvancementKind.Attribute:
+                if (LocalPlayerState.AttributeIdToKind(statId) is not { } attributeKind
+                    || !character.View.TryGetAttribute(
+                        (int)attributeKind, out RuntimeAttributeSnapshot attribute))
+                {
+                    return false;
+                }
+                curve = table.Attributes;
+                currentRanks = attribute.Ranks;
+                spentXp = attribute.Experience;
+                break;
+            case PluginAdvancementKind.Vital:
+                if (statId is not (1u or 3u or 5u)
+                    || LocalPlayerState.VitalIdToKind(statId) is not { } vitalKind
+                    || !character.View.TryGetVital(
+                        (int)vitalKind, out RuntimeVitalSnapshot vital))
+                {
+                    return false;
+                }
+                curve = table.Vitals;
+                currentRanks = vital.Ranks;
+                spentXp = vital.Experience;
+                break;
+            case PluginAdvancementKind.Skill:
+                if (!character.View.TryGetSkill(statId, out RuntimeSkillSnapshot skill))
+                    return false;
+                curve = skill.Status switch
+                {
+                    2u => table.TrainedSkills,
+                    3u => table.SpecializedSkills,
+                    _ => null,
+                };
+                if (curve is null)
+                    return false;
+                currentRanks = skill.Ranks;
+                spentXp = skill.Experience;
+                break;
+            default:
+                return false;
+        }
+
+        if ((long)currentRanks + ranks > curve.Length - 1L)
+            return false;
+
+        long price = ExperienceCost.ToRaise(curve, currentRanks, spentXp, (int)ranks);
+        if (price <= 0L)
+            return false;
+        cost = (ulong)price;
         return true;
     }
 

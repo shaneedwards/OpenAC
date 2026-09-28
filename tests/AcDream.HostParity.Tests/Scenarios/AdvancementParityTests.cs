@@ -1,4 +1,5 @@
 using AcDream.Plugin.Abstractions;
+using AcDream.Runtime.Plugins;
 
 namespace AcDream.HostParity.Tests;
 
@@ -24,6 +25,9 @@ public sealed class AdvancementParityTests
 
     /// <summary>A skill neither arm has ever been told the character has.</summary>
     private const uint UnknownSkill = 9999u;
+
+    /// <summary>A skill both arms are told about, but not yet trained.</summary>
+    private const uint UntrainedSkill = 10u;
 
     /// <summary>Endurance, as a request names it.</summary>
     private const uint Endurance = 2u;
@@ -162,6 +166,102 @@ public sealed class AdvancementParityTests
                 Skill,
                 PluginAdvancement.MaxSkillCredits + 1UL,
                 PluginAdvancementStatus.InvalidCost);
+        });
+
+    /// <summary>Unassigned experience arrives as a bare Int64 property update.</summary>
+    [Fact]
+    public void UnassignedExperienceReadsTheSameStagedValueOnBothClients() =>
+        ParityScenario.Run(static (arm, transcript) =>
+        {
+            Stage(arm);
+            ICharacterInfo character = arm.Host.Automation.Character;
+
+            arm.Server.Int64PropertyUpdate(2u, 12_345L);
+            arm.Advance();
+
+            transcript.Step("unassigned experience");
+            transcript.Record("value", character.UnassignedExperience);
+            Assert.Equal(12_345UL, character.UnassignedExperience);
+        });
+
+    /// <summary>The price a raise costs comes off the same installed experience table.</summary>
+    [Fact]
+    public void TheRaiseCostReadsTheSamePriceFromTheInstalledExperienceTableOnBothClients() =>
+        ParityScenario.Run(static (arm, transcript) =>
+        {
+            Stage(arm);
+            var surface = Assert.IsType<RuntimeAutomationSurface>(arm.Host.Automation);
+            surface.BindExperienceTable(static () => new DatReaderWriter.DBObjs.ExperienceTable
+            {
+                // Endurance is staged at 11 ranks, 1234 experience spent;
+                // entry 12 has to clear that or the price would be zero.
+                Attributes = [.. Enumerable.Range(0, 13).Select(i => (uint)(i * 150))],
+            });
+            ICharacterInfo character = arm.Host.Automation.Character;
+
+            transcript.Step("raise cost");
+            bool found = character.TryGetAdvancementCost(
+                PluginAdvancementKind.Attribute, Endurance, 1u, out ulong cost);
+            transcript.Record("found", found);
+            transcript.Record("cost", cost);
+            Assert.True(found, $"the {arm.Name} client could not price the raise");
+            Assert.Equal(566UL, cost);
+        });
+
+    /// <summary>Every reason a price is refused, checked at the same boundary on both clients.</summary>
+    [Fact]
+    public void ARefusedRaiseCostIsRefusedForTheSameReasonOnBothClients() =>
+        ParityScenario.Run(static (arm, transcript) =>
+        {
+            Stage(arm);
+            arm.Server.SkillUpdate(UntrainedSkill, ranks: 0u, advancementClass: 1u);
+            arm.Advance();
+            var surface = Assert.IsType<RuntimeAutomationSurface>(arm.Host.Automation);
+            surface.BindExperienceTable(static () => new DatReaderWriter.DBObjs.ExperienceTable
+            {
+                Attributes = [0, 150, 300],
+                Vitals = [0, 150, 300],
+                TrainedSkills = [0, 150, 300],
+                SpecializedSkills = [0, 150, 300],
+            });
+            ICharacterInfo character = arm.Host.Automation.Character;
+
+            void AssertRefused(
+                string what, PluginAdvancementKind kind, uint statId, uint ranks)
+            {
+                transcript.Step($"raise cost/{what}");
+                bool found = character.TryGetAdvancementCost(
+                    kind, statId, ranks, out ulong cost);
+                transcript.Record("found", found);
+                transcript.Record("cost", cost);
+                Assert.False(found, $"the {arm.Name} client priced {what}");
+                Assert.Equal(0UL, cost);
+            }
+
+            AssertRefused("untrained skill", PluginAdvancementKind.Skill, UntrainedSkill, 1u);
+            AssertRefused("unknown stat", PluginAdvancementKind.Attribute, 7u, 1u);
+            AssertRefused("train skill", PluginAdvancementKind.TrainSkill, Skill, 1u);
+            AssertRefused("zero ranks", PluginAdvancementKind.Attribute, Endurance, 0u);
+            AssertRefused("vital 2", PluginAdvancementKind.Vital, 2u, 1u);
+            AssertRefused("vital 4", PluginAdvancementKind.Vital, 4u, 1u);
+            AssertRefused("vital 6", PluginAdvancementKind.Vital, 6u, 1u);
+        });
+
+    /// <summary>With no experience table bound, a raise cannot be priced on either client.</summary>
+    [Fact]
+    public void TheRaiseCostAnswersFalseOnBothClientsWithNoExperienceTableBound() =>
+        ParityScenario.Run(static (arm, transcript) =>
+        {
+            Stage(arm);
+            ICharacterInfo character = arm.Host.Automation.Character;
+
+            transcript.Step("raise cost/no table");
+            bool found = character.TryGetAdvancementCost(
+                PluginAdvancementKind.Attribute, Endurance, 1u, out ulong cost);
+            transcript.Record("found", found);
+            transcript.Record("cost", cost);
+            Assert.False(found, $"the {arm.Name} client priced a raise with no table bound");
+            Assert.Equal(0UL, cost);
         });
 
     /// <summary>
