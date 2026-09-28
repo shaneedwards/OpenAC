@@ -179,15 +179,15 @@ launcher updates your plugin while a game is running.
 
 A reload switches the running copy off (`Disable`), then releases everything
 the host handed it: panels, canvases and images; commands; hotkeys; handlers
-on `Events` and `Selection`; chat filters, input interceptors and chat
-handlers; the handlers on `Automation.Trade`, `Automation.Vendor`,
-`Automation.Equipment` and `Automation.Navigation`, its walk and its pauses;
-world labels and world lines; maps, HUDs and textures; loot classifiers;
-status lines. Then it unloads the old assemblies, creates the new copy, and
-calls `Initialize` and `Enable` as at startup. `IPluginHost.IsHotReload` is
-true for that new copy. If the character is already in the world, the new
-copy's `LoginComplete` handlers are called right after `Enable`, so a plugin
-that sets up on login needs nothing extra.
+on `Events` and `Selection`; chat filters, display filters, input
+interceptors and chat handlers; the handlers on `Automation.Trade`,
+`Automation.Vendor`, `Automation.Equipment` and `Automation.Navigation`, its
+walk and its pauses; world labels and world lines; maps, HUDs and textures;
+loot classifiers; status lines. Then it unloads the old assemblies, creates
+the new copy, and calls `Initialize` and `Enable` as at startup.
+`IPluginHost.IsHotReload` is true for that new copy. If the character is
+already in the world, the new copy's `LoginComplete` handlers are called
+right after `Enable`, so a plugin that sets up on login needs nothing extra.
 
 Before the running copy is touched, the client reads the new `plugin.json`
 and loads the new assembly. A new copy with a different `id`, a newer

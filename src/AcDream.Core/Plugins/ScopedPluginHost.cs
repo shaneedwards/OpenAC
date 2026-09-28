@@ -856,6 +856,22 @@ internal sealed class ScopedPluginHost : IPluginHost, IDisposable
             throw new ObjectDisposedException(nameof(ScopedPluginChat));
         }
 
+        public IDisposable RegisterDisplayFilter(Func<PluginChatMessage, bool> hide)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            IDisposable registration = inner.RegisterDisplayFilter(hide);
+            lock (_gate)
+            {
+                if (!_disposed)
+                {
+                    _filters.Add(registration);
+                    return new IndividualFilter(this, registration);
+                }
+            }
+            registration.Dispose();
+            throw new ObjectDisposedException(nameof(ScopedPluginChat));
+        }
+
         private void RemoveFilter(IDisposable registration)
         {
             lock (_gate)

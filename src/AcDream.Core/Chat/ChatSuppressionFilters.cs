@@ -3,9 +3,10 @@ using AcDream.Plugin.Abstractions;
 namespace AcDream.Core.Chat;
 
 /// <summary>
-/// The ordered set of predicates consulted before a line is shown. A line a
-/// filter rejects is never appended, so it reaches neither the transcript,
-/// the windows bound to it, nor the log file.
+/// The ordered set of predicates a line is offered as it is appended. Used
+/// both for <see cref="ChatLog.Filters"/>, where a rejection drops the line
+/// everywhere, and <see cref="ChatLog.DisplayFilters"/>, where it only keeps
+/// the line off the display.
 /// </summary>
 public sealed class ChatSuppressionFilters
 {

@@ -27,6 +27,24 @@ public sealed class RuntimeCommunicationChatProjectionTests
     }
 
     [Fact]
+    public void AHiddenLinesRuntimeChatEntryRevisionIsTheLastShownLines()
+    {
+        using var state = new RuntimeCommunicationState();
+        using IDisposable hide = state.Chat.DisplayFilters.Register(
+            static candidate => candidate.Kind == (int)ChatKind.Tell);
+        var observer = new RecordingObserver();
+        using IDisposable subscription = state.Events.Subscribe(observer);
+
+        state.Chat.OnSystemMessage("shown", 0u);
+        long shownRevision = state.Chat.Revision;
+        state.Chat.OnTellReceived("Bob", "psst", 0x50000001u, logTextType: 0x03u);
+
+        Assert.Equal(2, observer.Entries.Count);
+        Assert.Equal(shownRevision, observer.Entries[1].Revision);
+        Assert.Equal(shownRevision, state.Chat.Revision);
+    }
+
+    [Fact]
     public void ASuppressedLineIsNeverProjectedToObservers()
     {
         using var state = new RuntimeCommunicationState();

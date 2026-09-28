@@ -183,6 +183,18 @@ public sealed class RuntimeCommunicationStateTests
         Assert.Equal("You can't jump while in the air", state.SpewBox.Snapshot()[0].Text);
     }
 
+    [Fact]
+    public void AddText_ClientLocal_HiddenByDisplayFilter_NeverReachesTheSpewBox()
+    {
+        using var state = new RuntimeCommunicationState();
+        using IDisposable hide = state.Chat.DisplayFilters.Register(static _ => true);
+
+        state.AddText("You can't jump while in the air", RetailLogTextType.ClientLocal);
+        state.SpewBox.Tick(0d);
+
+        Assert.Equal(0, state.SpewBox.Count);
+    }
+
     [Theory]
     [InlineData(RetailLogTextType.Default)]
     [InlineData(RetailLogTextType.Magic)]

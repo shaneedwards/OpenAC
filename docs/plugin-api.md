@@ -117,6 +117,39 @@ into the transcript, such as "You're too busy!" — pass through the same
 filters with `Kind == PluginChatMessage.StatusTextKind` (100). Check the
 kind if a filter should treat them differently from transcript lines.
 
+### Hiding lines from the display
+
+```csharp
+IDisposable hide = host.Automation.Chat.RegisterDisplayFilter(
+    message => message.Text.Contains("Your spell burned"));
+```
+
+A display filter is consulted the same way `RegisterFilter` is, and after
+it: a line a suppression filter already dropped is never offered here.
+Returning true keeps the line off the chat windows and the console only.
+
+- A line it hides still reaches `Received` and `CaptureMessages` on both
+  the graphical and the headless client, and the graphical client's `/log`
+  file, so hiding a line from the display never blinds another plugin or a
+  bot reading the log. It is one client-wide display, the same way a
+  suppression filter is one client-wide drop.
+- The filter sees the same uncensored words `RegisterFilter` does.
+- Filters run in registration order, and one that throws hides nothing.
+- Dispose the handle to remove one filter. The host removes every filter a
+  plugin installed when that plugin unloads.
+- A filter registered before login still applies to the next session.
+- A hidden line never becomes the client's reply, retell, monarch-reply or
+  patron-reply target: those are recorded from the same lines a chat
+  window shows, so a line the player never saw names nobody to answer.
+- Lines any plugin posts, and the player's own sent lines, are offered to
+  display filters too, so match narrowly enough not to hide your own repost.
+- Do not post a message from inside a display filter callback, for the same
+  reason as `RegisterFilter`.
+- On a windowless client the display is the console, so a hidden line is
+  not printed there either.
+- Status notices are offered too, and hiding one drops it, since the spew
+  box is its only display.
+
 ### Writing lines
 
 `PostSystemMessage(text)` is unchanged. `PostMessage(text, logTextType)`
@@ -2050,11 +2083,13 @@ not, so it is empty here.
 ### Chat, and the console
 
 `Chat` is real on both: `PostMessage`, `Submit`, `Compose`, `CaptureMessages`,
-`Received`, `IsInputActive`, the suppression filters and the input
-interceptors all sit on the shared surface, and a line typed at the console
-passes the interceptors the same way a line typed in a chat box does. `Compose` stages a line in the one chat entry both front ends type
-into, so on a windowless client it appears at the console and the next Enter
-sends it.
+`Received`, `IsInputActive`, the suppression filters, the display filters
+and the input interceptors all sit on the shared surface, and a line typed
+at the console passes the interceptors the same way a line typed in a chat
+box does. A display filter hides a line from the console the same way it
+hides one from a chat window. `Compose` stages a line in the one chat entry
+both front ends type into, so on a windowless client it appears at the
+console and the next Enter sends it.
 
 The headless console is that second front end, and `docs/building-and-running.md`
 describes what can be typed at it.
