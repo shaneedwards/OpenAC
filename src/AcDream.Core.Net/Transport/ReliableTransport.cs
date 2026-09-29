@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Net.Sockets;
 using AcDream.Core.Net.Cryptography;
 using AcDream.Core.Net.Packets;
 
@@ -47,7 +48,24 @@ internal sealed class ReliableTransport : IDisposable
         _assemblerSweepTimestamp = Clock.GetTimestamp();
         void CountedSend(ReadOnlySpan<byte> datagram)
         {
-            send(datagram);
+            try
+            {
+                send(datagram);
+            }
+            catch (SocketException error) when (IsTransientSendFailure(error))
+            {
+                // A send error on UDP is the same event as a lost packet. The
+                // caller caches the datagram once this returns, so a NAK can
+                // recover it; acks and NAKs are simply sent again.
+                if (!Stats.LastSendFailed)
+                {
+                    Console.Error.WriteLine(
+                        $"[session] send failed ({error.SocketErrorCode}); treating it as a lost packet");
+                }
+                Stats.LastSendFailed = true;
+                return;
+            }
+            Stats.LastSendFailed = false;
             Stats.PacketsSent++;
         }
 
@@ -71,6 +89,14 @@ internal sealed class ReliableTransport : IDisposable
         Stats.CacheDepthSource = () => Outbound.CacheDepth;
         _packetLoss = new RetailPacketLossAverager(Clock, Stats);
     }
+
+    /// <summary>A vanished local route: the network is gone for a moment, not the session.</summary>
+    private static bool IsTransientSendFailure(SocketException error) =>
+        error.SocketErrorCode is SocketError.NetworkUnreachable
+            or SocketError.HostUnreachable
+            or SocketError.NetworkDown
+            or SocketError.NoBufferSpaceAvailable
+            or SocketError.AddressNotAvailable;
 
     public uint HighestIdSent => Outbound.HighestIdSent;
 

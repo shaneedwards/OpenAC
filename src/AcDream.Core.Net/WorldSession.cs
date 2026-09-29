@@ -2766,7 +2766,8 @@ public sealed partial class WorldSession : IDisposable
             SendGameMessage,
             WaitForCharacterLogOffConfirmation,
             packet => _net.Send(packet),
-            TimeSpan.FromSeconds(35));
+            TimeSpan.FromSeconds(35),
+            () => _transport?.Stats.LastSendFailed ?? false);
 
         if (result.CharacterLogOffSent)
         {
@@ -2850,11 +2851,13 @@ public sealed partial class WorldSession : IDisposable
         Action<byte[]> sendGameMessage,
         Func<TimeSpan, bool> waitForConfirmation,
         Action<byte[]> sendTransportDatagram,
-        TimeSpan confirmationTimeout)
+        TimeSpan confirmationTimeout,
+        Func<bool> lastSendFailed)
     {
         ArgumentNullException.ThrowIfNull(sendGameMessage);
         ArgumentNullException.ThrowIfNull(waitForConfirmation);
         ArgumentNullException.ThrowIfNull(sendTransportDatagram);
+        ArgumentNullException.ThrowIfNull(lastSendFailed);
 
         bool characterLogOffSent = false;
         bool confirmationReceived = false;
@@ -2868,7 +2871,10 @@ public sealed partial class WorldSession : IDisposable
             {
                 sendGameMessage(CharacterLogOff.BuildRequestBody(activeCharacterId));
                 characterLogOffSent = true;
-                confirmationReceived = waitForConfirmation(confirmationTimeout);
+                // A swallowed send failure never confirms; waiting the full
+                // timeout would make an outage as slow to quit as retail is fast.
+                confirmationReceived = !lastSendFailed()
+                    && waitForConfirmation(confirmationTimeout);
             }
             catch (Exception error)
             {

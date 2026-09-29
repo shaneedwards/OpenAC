@@ -35,6 +35,10 @@ internal sealed class TransportStats
 
     public long RejectsReceived;
 
+    /// <summary>Whether the most recent send hit a transient socket error
+    /// (treated as a lost packet rather than a crash).</summary>
+    public bool LastSendFailed;
+
     public int CacheDepth => CacheDepthSource?.Invoke() ?? 0;
 
     internal Func<int>? CacheDepthSource { get; set; }

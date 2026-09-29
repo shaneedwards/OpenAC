@@ -109,7 +109,8 @@ public sealed class WorldSessionShutdownTests
                 order.Add("disconnect");
                 disconnect = datagram;
             },
-            confirmationTimeout: TimeSpan.FromSeconds(35));
+            confirmationTimeout: TimeSpan.FromSeconds(35),
+            lastSendFailed: () => false);
 
         Assert.Equal(["F653", "wait", "disconnect"], order);
         Assert.Equal(CharacterLogOff.BuildRequestBody(0x5000000Au), request);
@@ -151,13 +152,45 @@ public sealed class WorldSessionShutdownTests
                 return true;
             },
             sendTransportDatagram: _ => order.Add("disconnect"),
-            confirmationTimeout: TimeSpan.FromSeconds(1));
+            confirmationTimeout: TimeSpan.FromSeconds(1),
+            lastSendFailed: () => false);
 
         Assert.Equal(["F653", "disconnect"], order);
         Assert.False(result.CharacterLogOffSent);
         Assert.False(result.ConfirmationReceived);
         Assert.True(result.TransportDisconnectSent);
         Assert.IsType<IOException>(result.CharacterLogOffError);
+    }
+
+    [Fact]
+    public void ExecuteShutdownWire_LogoffSendSwallowedAsALostPacket_SkipsTheConfirmationWait()
+    {
+        var order = new List<string>();
+        WorldSession.SessionShutdownPlan plan = WorldSession.BuildShutdownPlan(
+            WorldSession.State.InWorld,
+            transportNegotiated: true,
+            activeCharacterId: 0x50000001u);
+
+        WorldSession.ShutdownExecutionResult result = WorldSession.ExecuteShutdownWire(
+            plan,
+            activeCharacterId: 0x50000001u,
+            sessionClientId: 1,
+            sessionIteration: 2,
+            sendGameMessage: _ => order.Add("F653"),
+            waitForConfirmation: timeout =>
+            {
+                order.Add("wait");
+                return true;
+            },
+            sendTransportDatagram: _ => order.Add("disconnect"),
+            confirmationTimeout: TimeSpan.FromSeconds(35),
+            lastSendFailed: () => true);
+
+        Assert.Equal(["F653", "disconnect"], order);
+        Assert.True(result.CharacterLogOffSent);
+        Assert.False(result.ConfirmationReceived);
+        Assert.True(result.TransportDisconnectSent);
+        Assert.Null(result.CharacterLogOffError);
     }
 
     [Fact]
