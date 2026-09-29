@@ -79,6 +79,10 @@ public sealed class FakePluginChat : IPluginChat
     public IDisposable RegisterDisplayFilter(Func<PluginChatMessage, bool> hide) =>
         NoOpPluginRegistration.Instance;
 
+    /// <inheritdoc/>
+    public IDisposable RegisterDisplayRewrite(Func<PluginChatMessage, string?> rewrite) =>
+        NoOpPluginRegistration.Instance;
+
     /// <summary>
     /// Every input interceptor currently installed, in registration order.
     /// A test drives them with <see cref="Intercept"/>.

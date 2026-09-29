@@ -107,6 +107,22 @@ public sealed class ChatTranscriptLogWriterTests : IDisposable
     }
 
     [Fact]
+    public void ARewrittenLineReachesTheLogFileWithItsOriginalText()
+    {
+        using var log = new ChatSessionLog(_directory);
+        var transcript = new ChatLog();
+        using IDisposable rewrite = transcript.DisplayRewrites.Register(static _ => "replaced");
+        var writer = new ChatTranscriptLogWriter(log);
+
+        log.Open("session", out _);
+        writer.Attach(transcript);
+        transcript.OnLocalSpeech("Dww", "original", 0x02u, false, 0u);
+        log.Close();
+
+        Assert.Equal("Dww says, \"original\"\n", Read());
+    }
+
+    [Fact]
     public void DetachReleasesTheTranscriptItActuallyAttachedTo()
     {
         using var log = new ChatSessionLog(_directory);

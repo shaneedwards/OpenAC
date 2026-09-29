@@ -857,8 +857,8 @@ public readonly record struct PluginChatInputDecision
 
 /// <summary>
 /// Reading the client's text, printing into it, dropping lines before they
-/// are shown, hiding lines from the display, and intercepting lines before
-/// they are sent.
+/// are shown, hiding lines from the display, rewriting what a shown line
+/// says, and intercepting lines before they are sent.
 /// </summary>
 public interface IPluginChat
 {
@@ -922,6 +922,25 @@ public interface IPluginChat
     /// <param name="hide">Answers true to keep the line off the display.</param>
     /// <returns>A handle that removes the filter when disposed.</returns>
     IDisposable RegisterDisplayFilter(Func<PluginChatMessage, bool> hide) =>
+        NoOpPluginRegistration.Instance;
+
+    /// <summary>
+    /// Installs a rewrite consulted before a line is shown. A non-null
+    /// answer replaces what follows the sender, so the sender's name keeps
+    /// its highlight and its click target; null leaves the line as it is.
+    /// A line a display filter hides is not offered here. Rewrites run in
+    /// registration order, the first non-null answer wins, and one that
+    /// throws changes nothing. <see cref="Received"/>,
+    /// <see cref="CaptureMessages"/> and the log file still get the line as
+    /// it arrived. Dispose the result to remove it; a host that predates
+    /// this member shows the line unrewritten.
+    /// </summary>
+    /// <param name="rewrite">
+    /// Answers the text to show after the sender, or null to leave the line
+    /// alone.
+    /// </param>
+    /// <returns>A handle that removes the rewrite when disposed.</returns>
+    IDisposable RegisterDisplayRewrite(Func<PluginChatMessage, string?> rewrite) =>
         NoOpPluginRegistration.Instance;
 
     /// <summary>

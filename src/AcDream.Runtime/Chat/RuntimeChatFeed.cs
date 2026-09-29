@@ -127,6 +127,9 @@ public sealed class RuntimeChatFeed : IDisposable
             ? markup
             : string.Concat(spans.Select(span => span.Text));
 
+        if (entry.DisplayRewrite is { } rewrite)
+            (text, spans) = ApplyDisplayRewrite(rewrite, spans);
+
         if (timestamps)
         {
             string prefix = ChatLog.FormatTimestampPrefix(entry.Received);
@@ -145,6 +148,33 @@ public sealed class RuntimeChatFeed : IDisposable
             Text: text,
             Spans: spans,
             ChannelName: entry.ChannelName);
+    }
+
+    /// <summary>
+    /// Replaces the spans after the sender's tagged span with the rewrite,
+    /// keeping the sender's own span untouched. A line with no tagged
+    /// sender has nothing to keep, so the rewrite replaces it whole.
+    /// </summary>
+    private static (string Text, IReadOnlyList<ChatTextSpan>? Spans) ApplyDisplayRewrite(
+        string rewrite, IReadOnlyList<ChatTextSpan>? spans)
+    {
+        int senderIndex = spans is null ? -1 : IndexOfSenderSpan(spans);
+        if (senderIndex < 0)
+            return (rewrite, null);
+
+        ChatTextSpan[] kept =
+            [.. spans!.Take(senderIndex + 1), new ChatTextSpan(rewrite, null)];
+        return (string.Concat(kept.Select(span => span.Text)), kept);
+    }
+
+    private static int IndexOfSenderSpan(IReadOnlyList<ChatTextSpan> spans)
+    {
+        for (int i = 0; i < spans.Count; i++)
+        {
+            if (spans[i].Tag is not null)
+                return i;
+        }
+        return -1;
     }
 
     private void OnEntryAppended(ChatEntry entry)

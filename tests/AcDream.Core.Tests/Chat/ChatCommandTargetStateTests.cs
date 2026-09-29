@@ -76,6 +76,18 @@ public sealed class ChatCommandTargetStateTests
     }
 
     [Fact]
+    public void ARewrittenTellStillSetsTheReplyTargetToTheOriginalSender()
+    {
+        var chat = new ChatLog();
+        using var targets = new ChatCommandTargetState(chat);
+        using IDisposable rewrite = chat.DisplayRewrites.Register(static _ => "replaced");
+
+        chat.OnTellReceived("Bestie", "incoming", 0x50000001u, logTextType: 0x03u);
+
+        Assert.Equal("Bestie", targets.LastIncomingTellSender);
+    }
+
+    [Fact]
     public void AHiddenMonarchOrPatronLineDoesNotReplaceThePriorReplyTarget()
     {
         var chat = new ChatLog();
