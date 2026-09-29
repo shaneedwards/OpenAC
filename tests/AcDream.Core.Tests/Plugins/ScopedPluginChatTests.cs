@@ -41,6 +41,22 @@ public sealed class ScopedPluginChatTests
     }
 
     [Fact]
+    public void UnloadingAPluginRemovesEveryDisplayRewriteItLeft()
+    {
+        var chat = new RecordingChat();
+        var inner = new StubHost(chat);
+        var scoped = new ScopedPluginHost(inner, "example.plugin", "Example");
+
+        scoped.Automation.Chat.RegisterDisplayRewrite(static _ => "a");
+        scoped.Automation.Chat.RegisterDisplayRewrite(static _ => null);
+        Assert.Equal(2, chat.DisplayRewriteCount);
+
+        scoped.Dispose();
+
+        Assert.Equal(0, chat.DisplayRewriteCount);
+    }
+
+    [Fact]
     public void SubscribingAfterUnloadThrowsWithoutEverTouchingTheHostsChat()
     {
         var chat = new RecordingChat();
@@ -235,11 +251,13 @@ public sealed class ScopedPluginChatTests
     {
         private readonly List<Func<PluginChatMessage, bool>> _filters = [];
         private readonly List<Func<PluginChatMessage, bool>> _displayFilters = [];
+        private readonly List<Func<PluginChatMessage, string?>> _displayRewrites = [];
         private readonly List<Func<string, PluginChatInputDecision>> _interceptors = [];
         private Action<PluginChatMessage>? _received;
 
         internal int FilterCount => _filters.Count;
         internal int DisplayFilterCount => _displayFilters.Count;
+        internal int DisplayRewriteCount => _displayRewrites.Count;
         internal int InterceptorCount => _interceptors.Count;
 
         public IDisposable RegisterInputInterceptor(
@@ -276,6 +294,12 @@ public sealed class ScopedPluginChatTests
             return new DisplayRemoval(this, hide);
         }
 
+        public IDisposable RegisterDisplayRewrite(Func<PluginChatMessage, string?> rewrite)
+        {
+            _displayRewrites.Add(rewrite);
+            return new DisplayRewriteRemoval(this, rewrite);
+        }
+
         public void PostSystemMessage(string text)
         {
         }
@@ -292,6 +316,13 @@ public sealed class ScopedPluginChatTests
             Func<PluginChatMessage, bool> hide) : IDisposable
         {
             public void Dispose() => owner._displayFilters.Remove(hide);
+        }
+
+        private sealed class DisplayRewriteRemoval(
+            RecordingChat owner,
+            Func<PluginChatMessage, string?> rewrite) : IDisposable
+        {
+            public void Dispose() => owner._displayRewrites.Remove(rewrite);
         }
     }
 

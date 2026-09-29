@@ -150,6 +150,41 @@ Returning true keeps the line off the chat windows and the console only.
 - Status notices are offered too, and hiding one drops it, since the spew
   box is its only display.
 
+### Rewriting what follows the sender
+
+```csharp
+IDisposable rewrite = host.Automation.Chat.RegisterDisplayRewrite(message =>
+    message.Kind == 0 && message.Text == "Malar Guasith"
+        ? " casts Summoning Mastery"
+        : null);
+```
+
+A rewrite is consulted after `RegisterDisplayFilter`: a line already hidden
+is not offered here. A non-null answer replaces what follows a clickable
+sender, so `+buffbot says, "Malar Guasith"` becomes `+buffbot casts Summoning
+Mastery` while `+buffbot` keeps its highlight and its click target, rather
+than losing both the way hiding the line and reposting it as a plain system
+message would. A line with no clickable sender (an NPC's or a creature's
+line, the player's own line, a system line) replaces the whole line instead,
+since it has nothing to keep; the answer must carry its own leading space
+when it does. Null leaves the line as it is.
+
+- `Received`, `CaptureMessages` and the chat log file still get the line as
+  it arrived; only the chat windows and the console show the rewrite.
+- Rewrites run in registration order, and the first non-null answer wins.
+- Rewrites see the same uncensored words `RegisterFilter` does, but the
+  answer itself is censored before it is shown, the same as any other line,
+  when the language filter is on.
+- One that throws changes nothing; the next rewrite in order still runs.
+- Dispose the handle to remove one rewrite. The host removes every rewrite a
+  plugin installed when that plugin unloads.
+- A rewrite registered before login still applies to the next session.
+- Lines any plugin posts, and the player's own sent lines, are offered to
+  rewrites too, so match narrowly enough not to rewrite your own repost.
+  Status notices are not offered to rewrites at all.
+- The rewrite is computed once, when the line is appended, not on every
+  redraw.
+
 ### Writing lines
 
 `PostSystemMessage(text)` is unchanged. `PostMessage(text, logTextType)`
@@ -2105,11 +2140,13 @@ not, so it is empty here.
 ### Chat, and the console
 
 `Chat` is real on both: `PostMessage`, `Submit`, `Compose`, `CaptureMessages`,
-`Received`, `IsInputActive`, the suppression filters, the display filters
-and the input interceptors all sit on the shared surface, and a line typed
-at the console passes the interceptors the same way a line typed in a chat
-box does. A display filter hides a line from the console the same way it
-hides one from a chat window. `Compose` stages a line in the one chat entry
+`Received`, `IsInputActive`, the suppression filters, the display filters,
+the display rewrites and the input interceptors all sit on the shared
+surface, and a line typed at the console passes the interceptors the same
+way a line typed in a chat box does. A display filter hides a line from the
+console the same way it hides one from a chat window, and a display rewrite
+changes what the console prints the same way it changes a chat window.
+`Compose` stages a line in the one chat entry
 both front ends type into, so on a windowless client it appears at the
 console and the next Enter sends it.
 

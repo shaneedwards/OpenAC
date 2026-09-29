@@ -96,6 +96,23 @@ public sealed class HeadlessPluginApiSurfaceTests
         Assert.Equal(1, runtime.CommunicationOwner.Chat.Count);
     }
 
+    [Fact]
+    public void ARewriteChangesTheTranscriptButNotTheEvent()
+    {
+        using GameRuntime runtime = NewRuntime();
+        using var host = NewHost(runtime);
+        var seen = new List<string>();
+        host.Automation.Chat.Received += message => seen.Add(message.Text);
+        using IDisposable rewrite = host.Automation.Chat.RegisterDisplayRewrite(
+            static candidate => candidate.Text == "rewrite me" ? "rewritten" : null);
+
+        runtime.CommunicationOwner.Chat.OnSystemMessage("rewrite me", 0u);
+
+        Assert.Equal(["rewrite me"], seen);
+        Assert.Equal(
+            "rewritten", runtime.CommunicationOwner.Chat.Snapshot()[0].DisplayRewrite);
+    }
+
     /// <summary>
     /// The windowless client's plugin host, and the bus its session host
     /// hangs off it: an interceptor a plugin registers through the host is

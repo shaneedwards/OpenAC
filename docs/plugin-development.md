@@ -179,8 +179,8 @@ launcher updates your plugin while a game is running.
 
 A reload switches the running copy off (`Disable`), then releases everything
 the host handed it: panels, canvases and images; commands; hotkeys; handlers
-on `Events` and `Selection`; chat filters, display filters, input
-interceptors and chat handlers; the handlers on `Automation.Trade`,
+on `Events` and `Selection`; chat filters, display filters, display rewrites,
+input interceptors and chat handlers; the handlers on `Automation.Trade`,
 `Automation.Vendor`, `Automation.Equipment` and `Automation.Navigation`, its
 walk and its pauses; world labels and world lines; maps, HUDs and textures;
 loot classifiers; status lines. Then it unloads the old assemblies, creates

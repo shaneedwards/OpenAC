@@ -74,6 +74,73 @@ public sealed class RuntimeChatFeedTests
                 .Select(span => span.Text)));
     }
 
+    // -- Display rewrite ----------------------------------------------------
+
+    [Fact]
+    public void ARewriteReplacesWhatFollowsTheSenderKeepingItsTagAndHighlight()
+    {
+        var log = new ChatLog();
+        using IDisposable rewrite = log.DisplayRewrites.Register(
+            static _ => " casts Summoning Mastery");
+        using var feed = new RuntimeChatFeed(log);
+
+        log.OnTellReceived("buffbot", "Malar Guasith", OtherPlayerGuid, logTextType: 0x03u);
+
+        RuntimeChatLine line = feed.Snapshot()[0];
+        Assert.Equal("buffbot casts Summoning Mastery", line.Text);
+        Assert.Equal(2, line.Spans!.Count);
+        Assert.NotNull(line.Spans[0].Tag);
+        Assert.Equal("buffbot", line.Spans[0].Text);
+        Assert.Null(line.Spans[1].Tag);
+        Assert.Equal(" casts Summoning Mastery", line.Spans[1].Text);
+    }
+
+    [Fact]
+    public void ARewriteOfALineWithNoTaggedSenderReplacesItWhole()
+    {
+        var log = new ChatLog();
+        using IDisposable rewrite = log.DisplayRewrites.Register(static _ => "replaced");
+        using var feed = new RuntimeChatFeed(log);
+
+        log.OnSystemMessage("original", 0u);
+
+        RuntimeChatLine line = feed.Snapshot()[0];
+        Assert.Equal("replaced", line.Text);
+        Assert.Null(line.Spans);
+    }
+
+    [Fact]
+    public void ARewriteOfALineWithSpansButNoTaggedSenderReplacesItWhole()
+    {
+        var log = new ChatLog();
+        using IDisposable rewrite = log.DisplayRewrites.Register(static _ => "replaced");
+        using var feed = new RuntimeChatFeed(log);
+
+        // A "<:" in the channel name swallows the sender's own tag markers
+        // out of the parse, so the line still gets spans but none carries a
+        // tag.
+        log.OnChannelBroadcast(7u, "Bob", "hi", channelName: "Fell<:owship");
+
+        RuntimeChatLine line = feed.Snapshot()[0];
+        Assert.Equal("replaced", line.Text);
+        Assert.Null(line.Spans);
+    }
+
+    [Fact]
+    public void ARewriteRunsOnceAtAppendNotOnEveryPoll()
+    {
+        var log = new ChatLog();
+        int calls = 0;
+        using IDisposable rewrite = log.DisplayRewrites.Register(_ => { calls++; return "x"; });
+        using var feed = new RuntimeChatFeed(log);
+
+        log.OnSystemMessage("hello", 0u);
+        _ = feed.Snapshot();
+        _ = feed.Snapshot();
+
+        Assert.Equal(1, calls);
+    }
+
     // -- Pull -------------------------------------------------------------
 
     [Fact]

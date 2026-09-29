@@ -500,6 +500,24 @@ public sealed class HeadlessConsoleTests
         Assert.Equal(string.Empty, output.ToString());
     }
 
+    [Fact]
+    public void ARewrittenLinePrintsTheReplacedBodyToTheConsole()
+    {
+        var log = new ChatLog();
+        using IDisposable rewrite = log.DisplayRewrites.Register(
+            static _ => " casts Summoning Mastery");
+        using var feed = new RuntimeChatFeed(log, new ChatWindowState());
+        var output = new StringWriter();
+        using var renderer = new HeadlessConsoleRenderer(
+            output, useColor: false, chat: feed);
+
+        log.OnTellReceived(
+            "buffbot", "Malar Guasith", 0x50000001u,
+            logTextType: (uint)RetailLogTextType.Tell);
+
+        Assert.Contains("buffbot casts Summoning Mastery", output.ToString());
+    }
+
     /// <summary>
     /// With colour on, a chat line is written in the colour the chat window
     /// shows that kind of line in, from the same table; with colour off it

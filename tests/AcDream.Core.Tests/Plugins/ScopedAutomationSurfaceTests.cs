@@ -163,9 +163,9 @@ public sealed class ScopedAutomationSurfaceTests
         EventInfo[] events = typeof(IPluginChat)
             .GetEvents(BindingFlags.Public | BindingFlags.Instance);
         Assert.True(
-            methods.Length == 13 && events.Length == 2,
+            methods.Length == 14 && events.Length == 2,
             "IPluginChat should still have exactly the members this test "
-                + "knows about (13 methods incl. event accessors, 2 events) -- "
+                + "knows about (14 methods incl. event accessors, 2 events) -- "
                 + "a member was added or removed without updating this test.");
 
         chat.CaptureMessages(0);
@@ -192,6 +192,9 @@ public sealed class ScopedAutomationSurfaceTests
         chat.RegisterDisplayFilter(static _ => true);
         Assert.Equal(1, recording.DisplayFilterCount);
 
+        chat.RegisterDisplayRewrite(static _ => null);
+        Assert.Equal(1, recording.DisplayRewriteCount);
+
         chat.RegisterInputInterceptor(static _ => PluginChatInputDecision.Pass);
         Assert.Equal(1, recording.InterceptorCount);
 
@@ -217,6 +220,7 @@ public sealed class ScopedAutomationSurfaceTests
     {
         private readonly List<Func<PluginChatMessage, bool>> _filters = [];
         private readonly List<Func<PluginChatMessage, bool>> _displayFilters = [];
+        private readonly List<Func<PluginChatMessage, string?>> _displayRewrites = [];
         private Action<PluginChatLinkClicked>? _linkClicked;
         private Action<PluginChatMessage>? _received;
 
@@ -276,6 +280,14 @@ public sealed class ScopedAutomationSurfaceTests
             return new DisplayRemoval(this, hide);
         }
 
+        internal int DisplayRewriteCount => _displayRewrites.Count;
+
+        public IDisposable RegisterDisplayRewrite(Func<PluginChatMessage, string?> rewrite)
+        {
+            _displayRewrites.Add(rewrite);
+            return new DisplayRewriteRemoval(this, rewrite);
+        }
+
         internal int InterceptorCount { get; private set; }
 
         public IDisposable RegisterInputInterceptor(
@@ -309,6 +321,13 @@ public sealed class ScopedAutomationSurfaceTests
             Func<PluginChatMessage, bool> hide) : IDisposable
         {
             public void Dispose() => owner._displayFilters.Remove(hide);
+        }
+
+        private sealed class DisplayRewriteRemoval(
+            RecordingIPluginChat owner,
+            Func<PluginChatMessage, string?> rewrite) : IDisposable
+        {
+            public void Dispose() => owner._displayRewrites.Remove(rewrite);
         }
     }
 

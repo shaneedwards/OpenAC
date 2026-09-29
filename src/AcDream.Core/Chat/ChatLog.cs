@@ -250,6 +250,10 @@ public sealed class ChatLog
     /// of the log still gets it.</summary>
     public ChatSuppressionFilters DisplayFilters { get; } = new();
 
+    /// <summary>Rewrites offered what follows the sender on the display; every
+    /// reader downstream of the log still gets the line as it arrived.</summary>
+    public ChatDisplayRewrites DisplayRewrites { get; } = new();
+
     /// <summary>
     /// Projects an entry into the shape filters are written against. The
     /// sequence is zero: the entry has not been appended yet, so it has none.
@@ -287,8 +291,16 @@ public sealed class ChatLog
         // A display filter drops the line from the buffer only: every reader
         // downstream of EntryAppended still gets it.
         bool hidden = DisplayFilters.ShouldSuppress(candidate);
+        // A hidden line is not shown at all, so it has nothing to rewrite.
+        string? rewrite = hidden ? null : DisplayRewrites.Rewrite(candidate);
         if (FilterLanguageSource?.Invoke() == true)
+        {
             entry = entry with { Text = ChatLanguageFilter.Censor(entry.Text, FilterLanguagePatterns) };
+            // The rewrite is a display string, same as the entry's own text,
+            // so a plugin's rewrite gets the same censor before it is shown.
+            if (rewrite is not null)
+                rewrite = ChatLanguageFilter.Censor(rewrite, FilterLanguagePatterns);
+        }
 
         // Stamp every entry with an identity that is never reused, so anything holding on to
         // one line (a text selection, say) can still find it after older entries are dropped
@@ -297,6 +309,7 @@ public sealed class ChatLog
         {
             Sequence = Interlocked.Increment(ref _sequence),
             HiddenFromDisplay = hidden,
+            DisplayRewrite = rewrite,
         };
         if (!hidden)
         {
@@ -365,4 +378,8 @@ public readonly record struct ChatEntry(
 
     /// <summary>Kept off the display; still passed to <see cref="ChatLog.EntryAppended"/>.</summary>
     public bool HiddenFromDisplay { get; init; }
+
+    /// <summary>What replaces what follows the sender on the display; null when
+    /// nothing rewrote this line, or it is hidden.</summary>
+    public string? DisplayRewrite { get; init; }
 }

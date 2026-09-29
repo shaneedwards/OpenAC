@@ -191,6 +191,25 @@ public sealed class ChatVMTests
     }
 
     [Fact]
+    public void ARewriteShowsTheReplacedBodyWithTheSendersHighlightKept()
+    {
+        var log = new ChatLog();
+        using IDisposable rewrite = log.DisplayRewrites.Register(
+            static _ => " casts Summoning Mastery");
+        var vm = new ChatVM(log);
+
+        log.OnTellReceived("buffbot", "Malar Guasith", 0x50000001u, logTextType: 0x03u);
+
+        FormattedLine line = Assert.Single(vm.RecentLinesDetailed());
+        Assert.Equal("buffbot casts Summoning Mastery", line.Text);
+        Assert.Equal(2, line.Spans!.Count);
+        Assert.NotNull(line.Spans[0].Tag);
+        Assert.Equal("buffbot", line.Spans[0].Text);
+        Assert.Null(line.Spans[1].Tag);
+        Assert.Equal(" casts Summoning Mastery", line.Spans[1].Text);
+    }
+
+    [Fact]
     public void RecentLines_ShowsPluginSystemMessage_TaggedDefault()
     {
         var log = new ChatLog();
