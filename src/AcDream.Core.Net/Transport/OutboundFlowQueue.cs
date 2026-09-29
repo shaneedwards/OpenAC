@@ -23,6 +23,10 @@ internal sealed class OutboundFlowQueue : IDisposable
 
     private readonly List<uint> _pendingResends = new();
 
+    /// <summary>The newest packet whose send never reached the socket, until
+    /// the server acknowledges past it; <c>null</c> when there is none.</summary>
+    private uint? _unsentThrough;
+
     public uint HighestIdSent { get; private set; }
 
     /// <summary>The fragment sequence the NEXT reliable message will use.
@@ -30,6 +34,20 @@ internal sealed class OutboundFlowQueue : IDisposable
     public uint FragmentSequence { get; private set; }
 
     public uint AckWatermark { get; private set; }
+
+    /// <summary>
+    /// The sequence an ack-only packet carries. Normally the highest id sent,
+    /// as retail does. While a packet that never left the machine is still
+    /// unacknowledged, it is the ack watermark instead: ACE parks an ack-only
+    /// packet under the sequence it names, and a real packet arriving while
+    /// its slot holds that ack is discarded with its ISAAC key spent, so it can
+    /// never be retransmitted. The watermark names nothing ACE can be missing;
+    /// once resends close the gap ACE drops these acks as already received
+    /// until its next ack moves the watermark, which costs nothing but a
+    /// moment's lag in its view of what we have received.
+    /// </summary>
+    public uint AckPacketSequence =>
+        _unsentThrough is null ? HighestIdSent : AckWatermark;
 
     public int CacheDepth => _store.Count;
 
@@ -133,6 +151,8 @@ internal sealed class OutboundFlowQueue : IDisposable
             HighestIdSent = header.Sequence;
 
             _send(buffer.AsSpan(0, datagramLength));
+            if (_stats.LastSendFailed)
+                _unsentThrough = header.Sequence;
 
             _store.Add(
                 new SentPacketStore.CachedPacket(
@@ -155,6 +175,8 @@ internal sealed class OutboundFlowQueue : IDisposable
     {
         _stats.AcksConsumed++;
         AckWatermark = SequenceMath.Max(AckWatermark, ackSequence);
+        if (_unsentThrough is { } unsent && SequenceMath.IsNewer(AckWatermark, unsent))
+            _unsentThrough = null;
     }
 
     public void OnRetransmitRequest(ReadOnlySpan<byte> idBytes, int count)

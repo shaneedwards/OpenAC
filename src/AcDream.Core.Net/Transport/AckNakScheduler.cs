@@ -79,7 +79,7 @@ internal sealed class AckNakScheduler
 
         var header = new PacketHeader
         {
-            Sequence = _outbound.HighestIdSent,
+            Sequence = _outbound.AckPacketSequence,
             Flags = PacketHeaderFlags.AckSequence,
             Id = _sessionClientId,
             Time = _clock.IntervalId,

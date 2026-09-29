@@ -104,6 +104,52 @@ public sealed class TransientSendFailureTests
         Assert.Equal(2, lines);
     }
 
+    [Fact]
+    public void AckPacket_NamesTheWatermark_WhileAnUnsentPacketIsUnacknowledged()
+    {
+        bool fail = false;
+        using var transport = new ReliableTransport(
+            MakeIsaac(ClientSeed),
+            MakeIsaac(ServerSeed),
+            SessionClientId,
+            SessionIteration,
+            _ =>
+            {
+                if (fail)
+                    throw new SocketException((int)SocketError.NetworkUnreachable);
+            });
+        TextWriter saved = Console.Error;
+        try
+        {
+            Console.SetError(TextWriter.Null);
+            OutboundFlowQueue outbound = transport.Outbound;
+
+            outbound.SendGameMessage(MakeMessage(1), GameMessageGroup.UIQueue); // 2
+            outbound.OnAckSequence(2u);
+            Assert.Equal(outbound.HighestIdSent, outbound.AckPacketSequence);
+
+            fail = true;
+            outbound.SendGameMessage(MakeMessage(2), GameMessageGroup.UIQueue); // 3, never sent
+            outbound.SendGameMessage(MakeMessage(3), GameMessageGroup.UIQueue); // 4, never sent
+            fail = false;
+            outbound.SendGameMessage(MakeMessage(4), GameMessageGroup.UIQueue); // 5
+            Assert.Equal(5u, outbound.HighestIdSent);
+            Assert.Equal(2u, outbound.AckPacketSequence);
+
+            // Acknowledged up to the last unsent packet, not yet past it.
+            outbound.OnAckSequence(4u);
+            Assert.Equal(4u, outbound.AckPacketSequence);
+
+            // Past it: back to the retail convention.
+            outbound.OnAckSequence(5u);
+            Assert.Equal(5u, outbound.AckPacketSequence);
+        }
+        finally
+        {
+            Console.SetError(saved);
+        }
+    }
+
     private static void Nak(OutboundFlowQueue queue, params uint[] ids)
     {
         byte[] bytes = new byte[ids.Length * 4];
