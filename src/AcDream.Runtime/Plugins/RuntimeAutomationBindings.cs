@@ -1,5 +1,6 @@
 using System.Reflection;
 using AcDream.Content;
+using AcDream.Content.Skills;
 using AcDream.Core.Physics;
 using AcDream.Plugin.Abstractions;
 using AcDream.Runtime.Gameplay;
@@ -213,6 +214,8 @@ internal static class RuntimeAutomationBindings
             ["BindTitleNameResolver"] =
                 nameof(RuntimeAutomationHostCapabilities.Content),
             ["BindDungeonMap"] =
+                nameof(RuntimeAutomationHostCapabilities.Content),
+            ["BindExperienceTable"] =
                 nameof(RuntimeAutomationHostCapabilities.Content),
         };
 
@@ -507,6 +510,17 @@ internal static class RuntimeAutomationBindings
         // are only opened when a plan is first asked for.
         surface.BindDungeonMap(dats, datLock);
         bound.Add(nameof(surface.BindDungeonMap));
+
+        // Read lazily, so a session that never prices a raise never pays for it.
+        var experienceTable = new Lazy<DatReaderWriter.DBObjs.ExperienceTable?>(
+            () =>
+            {
+                lock (datLock)
+                    return ExperienceCost.LoadTable(
+                        dats, message => warn?.Invoke($"plugin automation: {message}"));
+            });
+        surface.BindExperienceTable(() => experienceTable.Value);
+        bound.Add(nameof(surface.BindExperienceTable));
 
         DatReaderWriter.DBObjs.SkillTable? skillTable;
         lock (datLock)

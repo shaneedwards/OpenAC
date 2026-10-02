@@ -563,6 +563,49 @@ public interface ICharacterInfo
     }
 
     /// <summary>
+    /// What the character carries, in burden units, as the pack shows it.
+    /// 0 with no character, and from the default implementation.
+    /// </summary>
+    int BurdenLoad => 0;
+
+    /// <summary>
+    /// What the character can carry unburdened, from its buffed Strength and
+    /// augmentation, as the pack shows it. 0 with no character, and from the
+    /// default implementation.
+    /// </summary>
+    int BurdenCapacity => 0;
+
+    /// <summary>
+    /// Experience the character has earned and not yet spent, which is what
+    /// <see cref="RequestAdvancement"/> spends from. 0 before the server has
+    /// said, and on a host that does not track it, which is what the default
+    /// implementation reports.
+    /// </summary>
+    ulong UnassignedExperience => 0UL;
+
+    /// <summary>
+    /// The experience it costs to raise one stat by <paramref name="ranks"/>
+    /// ranks, the cost <see cref="RequestAdvancement"/> would take for that
+    /// spend. False for an unknown stat, an untrained or unspecialized
+    /// skill, zero ranks or a request past the top of the table, training a
+    /// skill (which costs skill credits, not experience), or a host with no
+    /// installed data files.
+    /// </summary>
+    /// <param name="kind">Which kind of stat to price.</param>
+    /// <param name="statId">The same number <see cref="RequestAdvancement"/> takes for that kind.</param>
+    /// <param name="ranks">How many ranks to buy: 1 for the next one.</param>
+    /// <param name="cost">The experience it costs, or 0 when false.</param>
+    bool TryGetAdvancementCost(
+        PluginAdvancementKind kind,
+        uint statId,
+        uint ranks,
+        out ulong cost)
+    {
+        cost = 0UL;
+        return false;
+    }
+
+    /// <summary>
     /// Asks the client to spend on one stat: raising an attribute, a pool or a
     /// skill with experience, or training a skill with skill credits. The
     /// client checks the request and sends it; whether the spend is allowed is
@@ -579,6 +622,8 @@ public interface ICharacterInfo
     /// What to spend: experience for the first three kinds, skill credits for
     /// <see cref="PluginAdvancementKind.TrainSkill"/>. Zero is refused, as is
     /// anything above the bound in <see cref="PluginAdvancement"/>.
+    /// <see cref="TryGetAdvancementCost"/> gives the cost for a number of
+    /// ranks.
     /// </param>
     /// <returns>
     /// What the client did with it, and why not when it refused. A host that

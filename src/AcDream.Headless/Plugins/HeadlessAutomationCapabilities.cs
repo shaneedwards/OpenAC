@@ -79,7 +79,8 @@ internal static partial class HeadlessAutomationCapabilities
                 + "creature's position is the server's last word about it "
                 + "rather than its body, and no authored words about the "
                 + "character's contracts, so a plugin reads them by "
-                + "number alone",
+                + "number alone, and no experience table, so a plugin cannot "
+                + "price a raise",
             [nameof(RuntimeAutomationHostCapabilities.MagicCatalog)] =
                 "the spell catalog comes from the installed data files",
             [nameof(RuntimeAutomationHostCapabilities.NavigationWalk)] =

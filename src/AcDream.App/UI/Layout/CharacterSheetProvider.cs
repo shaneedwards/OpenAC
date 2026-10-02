@@ -320,37 +320,6 @@ public sealed class CharacterSheetProvider
         }
     }
 
-    public static DatReaderWriter.DBObjs.ExperienceTable? LoadExperienceTable(
-        IDatReaderWriter dats, Action<string>? log = null)
-    {
-        if (dats is null) return null;
-
-        try
-        {
-            var table = dats.Get<DatReaderWriter.DBObjs.ExperienceTable>(0x0E000018u);
-            if (table is not null) return table;
-        }
-        catch (Exception ex)
-        {
-            log?.Invoke($"[UI] ExperienceTable 0x0E000018 read failed ({ex.GetType().Name}: {ex.Message}); trying type scan.");
-        }
-
-        try
-        {
-            foreach (uint id in dats.GetAllIdsOfType<DatReaderWriter.DBObjs.ExperienceTable>())
-            {
-                var table = dats.Get<DatReaderWriter.DBObjs.ExperienceTable>(id);
-                if (table is not null) return table;
-            }
-        }
-        catch (Exception ex)
-        {
-            log?.Invoke($"[UI] ExperienceTable type scan failed ({ex.GetType().Name}: {ex.Message}); raise costs unavailable.");
-        }
-
-        return null;
-    }
-
     private (long toNext, float fraction, bool noNextLevel) ComputeLevelXp(
         int level, long totalXp)
     {
@@ -391,13 +360,13 @@ public sealed class CharacterSheetProvider
         long AttributeRaiseCost(LocalPlayerState.AttributeKind kind)
         {
             var attr = _localPlayer.GetAttribute(kind);
-            return attr is null || xp is null ? 0L : RaiseCostFromXpCurve(xp.Attributes, attr.Value.Ranks, attr.Value.Xp, amount);
+            return attr is null || xp is null ? 0L : ExperienceCost.ToRaise(xp.Attributes, attr.Value.Ranks, attr.Value.Xp, amount);
         }
 
         long VitalRaiseCost(LocalPlayerState.VitalKind kind)
         {
             var vital = _localPlayer.Get(kind);
-            return vital is null || xp is null ? 0L : RaiseCostFromXpCurve(xp.Vitals, vital.Value.Ranks, vital.Value.Xp, amount);
+            return vital is null || xp is null ? 0L : ExperienceCost.ToRaise(xp.Vitals, vital.Value.Ranks, vital.Value.Xp, amount);
         }
     }
 
@@ -479,18 +448,7 @@ public sealed class CharacterSheetProvider
         uint[] curve = advancement == CharacterSkillAdvancementClass.Specialized
             ? xp.SpecializedSkills
             : xp.TrainedSkills;
-        return RaiseCostFromXpCurve(curve, skill.Ranks, skill.Xp, amount);
-    }
-
-    private static long RaiseCostFromXpCurve(uint[]? curve, uint ranks, uint spentXp, int amount)
-    {
-        if (curve is null || amount <= 0) return 0L;
-        long maxIndex = curve.Length - 1L;
-        if (maxIndex <= ranks) return 0L;
-        long targetLong = Math.Min((long)ranks + amount, maxIndex);
-        long targetXp = curve[(int)targetLong];
-        long cost = targetXp - spentXp;
-        return cost > 0 ? cost : 0L;
+        return ExperienceCost.ToRaise(curve, skill.Ranks, skill.Xp, amount);
     }
 
     private static long ClampToLong(ulong value) =>

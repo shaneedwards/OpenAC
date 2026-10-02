@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AcDream.Core.Properties;
 
 namespace AcDream.Core.Items;
 
@@ -496,6 +497,17 @@ public static class BurdenMath
         if (bonus < 0) bonus = 0;
         if (bonus > AugBurdenCap) bonus = AugBurdenCap;
         return strength * BurdenPerStrength + bonus * strength;
+    }
+
+    /// <summary>The player's carried load, preferring the server's total, and the capacity at <paramref name="strength"/>.</summary>
+    public static (int Load, int Capacity) Read(
+        ClientObjectTable objects, uint playerGuid, int strength)
+    {
+        ClientObject? player = objects.Get(playerGuid);
+        int aug = player?.Properties.GetInt((uint)PropertyInt.AugmentationIncreasedCarryingCapacity) ?? 0;
+        int load = player?.Properties.Ints.TryGetValue((uint)PropertyInt.EncumbranceVal, out int wire) == true
+            ? wire : objects.SumCarriedBurden(playerGuid);
+        return (load, EncumbranceCapacity(strength, aug));
     }
 
     public static float LoadRatio(int capacity, int burden)

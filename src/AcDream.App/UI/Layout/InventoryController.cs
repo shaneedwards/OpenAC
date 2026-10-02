@@ -71,9 +71,6 @@ public sealed class InventoryController : IItemListDragHandler, IRetainedPanelCo
         uint ContainerId,
         int Placement);
 
-    private const uint EncumbranceValProperty = 5u;
-    private const uint EncumbranceAugProperty = 0xE6u;
-
     private InventoryController(
         ImportedLayout layout,
         ClientObjectTable objects,
@@ -1237,14 +1234,8 @@ public sealed class InventoryController : IItemListDragHandler, IRetainedPanelCo
 
     private void RefreshBurden()
     {
-        uint p = _playerGuid();
         int str = _strength() ?? 10;                       // InqAttribute default 0xa
-        int aug = _objects.Get(p)?.Properties.GetInt(EncumbranceAugProperty) ?? 0;
-        int capacity = BurdenMath.EncumbranceCapacity(str, aug);
-
-        int? wire = _objects.Get(p)?.Properties.Ints.TryGetValue(EncumbranceValProperty, out var ev) == true
-            ? ev : (int?)null;
-        int burden = wire ?? _objects.SumCarriedBurden(p);
+        (int burden, int capacity) = BurdenMath.Read(_objects, _playerGuid(), str);
 
         float load = BurdenMath.LoadRatio(capacity, burden);
         _burdenFill    = BurdenMath.LoadToFill(load);
