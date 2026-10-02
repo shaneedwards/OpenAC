@@ -563,6 +563,19 @@ public interface ICharacterInfo
     }
 
     /// <summary>
+    /// What the character carries, in burden units, as the pack shows it.
+    /// 0 with no character, and from the default implementation.
+    /// </summary>
+    int BurdenLoad => 0;
+
+    /// <summary>
+    /// What the character can carry unburdened, from its buffed Strength and
+    /// augmentation, as the pack shows it. 0 with no character, and from the
+    /// default implementation.
+    /// </summary>
+    int BurdenCapacity => 0;
+
+    /// <summary>
     /// Experience the character has earned and not yet spent, which is what
     /// <see cref="RequestAdvancement"/> spends from. 0 before the server has
     /// said, and on a host that does not track it, which is what the default

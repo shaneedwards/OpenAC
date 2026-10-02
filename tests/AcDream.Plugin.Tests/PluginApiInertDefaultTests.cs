@@ -46,6 +46,14 @@ public sealed class PluginApiInertDefaultTests
     }
 
     [Fact]
+    public void BurdenReadsAsZeroByDefault()
+    {
+        ICharacterInfo character = new MinimalCharacter();
+        Assert.Equal(0, character.BurdenLoad);
+        Assert.Equal(0, character.BurdenCapacity);
+    }
+
+    [Fact]
     public void TitlesReadAsNoneByDefault()
     {
         ICharacterInfo character = new MinimalCharacter();

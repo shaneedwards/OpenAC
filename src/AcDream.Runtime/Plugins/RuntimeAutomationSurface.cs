@@ -2288,6 +2288,28 @@ internal sealed class RuntimeAutomationSurface
         return true;
     }
 
+    public int BurdenLoad => ReadBurden().Load;
+
+    public int BurdenCapacity => ReadBurden().Capacity;
+
+    private (int Load, int Capacity) ReadBurden()
+    {
+        GameRuntime? runtime;
+        RuntimeCharacterState? character;
+        lock (_gate)
+        {
+            runtime = _runtime;
+            character = _character;
+        }
+        uint playerId = runtime?.PlayerIdentity.ServerGuid ?? 0u;
+        if (runtime is null || character is null || playerId == 0u)
+            return (0, 0);
+
+        int strength = character.LocalPlayer.GetEffectiveAttribute(
+            LocalPlayerState.AttributeKind.Strength) ?? 10;
+        return BurdenMath.Read(runtime.InventoryOwner.Objects, playerId, strength);
+    }
+
     /// <summary>Read from the property the server banks unspent experience in.</summary>
     public ulong UnassignedExperience
     {
