@@ -131,6 +131,156 @@ public class MarkupDocumentTests
         Assert.Equal("5", field.Text);
     }
 
+    private sealed class RowValueBinding
+    {
+        public IReadOnlyList<string> Rows => ["Row A", "Row B"];
+        private readonly string[] _values = ["1", "1"];
+        public int SelectedIndex { get; private set; }
+        public string Value
+        {
+            get => _values[SelectedIndex];
+            set => _values[SelectedIndex] = value;
+        }
+        public Action<int> SelectRow => value => SelectedIndex = value;
+        public Action<string> ChangeValue => value => Value = value;
+    }
+
+    /// <summary>
+    /// Clicking a row clears the field's focus before the row's own
+    /// selection changes, so the field must catch up at focus loss or it
+    /// keeps showing what was typed into the row that was selected before.
+    /// </summary>
+    [Fact]
+    public void AFieldShowsTheNewRowAfterItWasTypedInAndTheRowChanged()
+    {
+        const string xml = """
+            <panel x="0" y="0" w="240" h="120">
+              <field x="4" y="4" w="120" h="20" text="{Value}" onchange="{ChangeValue}" />
+              <list x="132" y="4" w="100" h="40" items="{Rows}"
+                    selected="{SelectedIndex}" onchange="{SelectRow}" />
+            </panel>
+            """;
+        var binding = new RowValueBinding();
+        UiNineSlicePanel panel = MarkupDocument.Build(xml, binding, _ => (1u, 32, 32));
+        var root = new UiRoot { Width = 800, Height = 600 };
+        root.AddChild(panel);
+        UiField field = Assert.IsType<UiField>(panel.Children[0]);
+        panel.TickSelfAndChildren(0.016); // let the field read its value first
+
+        root.SetKeyboardFocus(field);
+        field.SetText("4");
+        Assert.Equal("4", binding.Value);
+
+        root.OnMouseDown(UiMouseButton.Left, 140, 23); // row index 1
+        panel.TickSelfAndChildren(0.016);
+
+        Assert.Equal(1, binding.SelectedIndex);
+        Assert.Equal("1", field.Text);
+    }
+
+    private sealed class ClampingBinding
+    {
+        private string _value = "5";
+        public string Value
+        {
+            get => _value;
+            set => _value = int.TryParse(value, out int n) ? Math.Clamp(n, 0, 100).ToString() : _value;
+        }
+        public Action<string> ChangeValue => value => Value = value;
+    }
+
+    /// <summary>
+    /// Pins today's behavior: a clamp the owner applies while the field is
+    /// focused shows as soon as focus leaves.
+    /// </summary>
+    [Fact]
+    public void AnOwnersClampShowsWhenTheFieldLosesFocus()
+    {
+        const string xml = """
+            <panel x="0" y="0" w="240" h="60">
+              <field x="4" y="4" w="120" h="20" text="{Value}" onchange="{ChangeValue}" />
+            </panel>
+            """;
+        var binding = new ClampingBinding();
+        UiNineSlicePanel panel = MarkupDocument.Build(xml, binding, _ => (1u, 32, 32));
+        var root = new UiRoot { Width = 800, Height = 600 };
+        root.AddChild(panel);
+        UiField field = Assert.IsType<UiField>(panel.Children[0]);
+        panel.TickSelfAndChildren(0.016); // let the field read its value first
+
+        root.SetKeyboardFocus(field);
+        field.SetText("999");
+        Assert.Equal("999", field.Text);
+
+        root.SetKeyboardFocus(null);
+        panel.TickSelfAndChildren(0.016);
+
+        Assert.Equal("100", field.Text);
+    }
+
+    private sealed class ValidatingBinding
+    {
+        public string Value { get; private set; } = "5";
+        public Action<string> ChangeValue => value =>
+        {
+            if (int.TryParse(value, out _)) Value = value;
+        };
+    }
+
+    /// <summary>
+    /// Pins today's behavior: text the owner refuses stays shown after
+    /// focus leaves, since the binding never moved.
+    /// </summary>
+    [Fact]
+    public void ATypedValueTheOwnerDoesNotTakeStaysShownAfterFocusLeaves()
+    {
+        const string xml = """
+            <panel x="0" y="0" w="240" h="60">
+              <field x="4" y="4" w="120" h="20" text="{Value}" onchange="{ChangeValue}" />
+            </panel>
+            """;
+        var binding = new ValidatingBinding();
+        UiNineSlicePanel panel = MarkupDocument.Build(xml, binding, _ => (1u, 32, 32));
+        var root = new UiRoot { Width = 800, Height = 600 };
+        root.AddChild(panel);
+        UiField field = Assert.IsType<UiField>(panel.Children[0]);
+        panel.TickSelfAndChildren(0.016); // let the field read its value first
+
+        root.SetKeyboardFocus(field);
+        field.SetText("abc");
+        Assert.Equal("5", binding.Value);
+
+        root.SetKeyboardFocus(null);
+        panel.TickSelfAndChildren(0.016);
+
+        Assert.Equal("abc", field.Text);
+    }
+
+    /// <summary>
+    /// Pins today's behavior: nothing changes under the caret while the
+    /// owner's value moves behind a focused field.
+    /// </summary>
+    [Fact]
+    public void AFieldDoesNotChangeUnderTheCaret()
+    {
+        const string xml = """
+            <panel x="0" y="0" w="240" h="60">
+              <field x="4" y="4" w="120" h="20" text="{Range}" onchange="{ChangeRange}" />
+            </panel>
+            """;
+        var binding = new LateValueBinding();
+        UiNineSlicePanel panel = MarkupDocument.Build(xml, binding, _ => (1u, 32, 32));
+        var root = new UiRoot { Width = 800, Height = 600 };
+        root.AddChild(panel);
+        UiField field = Assert.IsType<UiField>(panel.Children[0]);
+
+        root.SetKeyboardFocus(field);
+        binding.Range = "999";
+        panel.TickSelfAndChildren(0.016);
+
+        Assert.Equal("5", field.Text);
+    }
+
     [Fact]
     public void FieldAndMenuBindEditablePluginState()
     {

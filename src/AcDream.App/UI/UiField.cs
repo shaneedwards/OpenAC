@@ -790,7 +790,7 @@ public sealed class UiField : UiElement
                 return true;
             case UiEventType.FocusLost:
                 OnFocusLost?.Invoke(_text);
-                _focused = false; ResetRecall();
+                _focused = false; FollowBoundText(); ResetRecall();
                 _selAnchor = null; _selecting = false; _repeatKey = null;
                 _preserveFocusSelectionOnMouseDown = false;
                 return true;
